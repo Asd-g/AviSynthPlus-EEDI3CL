@@ -139,6 +139,9 @@
     <ClCompile Include="..\src\EEDI3CL_SSE2.cpp" />
     <ClCompile Include="..\src\VCL2\instrset_detect.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="..\src\EEDI3CL.rc" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
