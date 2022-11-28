@@ -474,7 +474,7 @@ static AVS_VideoFrame* AVSC_CC get_frame_EEDI3CL(AVS_FilterInfo* fi, int n)
         return nullptr;
 
     AVS_VideoFrame* dst{ avs_new_video_frame_p(fi->env, &fi->vi, src) };
-    const AVS_VideoFrame* scp{ (d->vcheck && d->sclip) ? avs_get_frame(d->sclip, n) : nullptr };
+    AVS_VideoFrame* scp{ (d->vcheck && d->sclip) ? avs_get_frame(d->sclip, n) : nullptr };
     AVS_VideoFrame* pad[4]{};
 
     const int planes_y[4]{ AVS_PLANAR_Y, AVS_PLANAR_U, AVS_PLANAR_V, AVS_PLANAR_A };
@@ -539,7 +539,11 @@ static AVS_VideoFrame* AVSC_CC get_frame_EEDI3CL(AVS_FilterInfo* fi, int n)
         strcpy(d->err.get(), err.c_str());
         fi->error = d->err.get();
         avs_release_video_frame(src);
+        avs_release_video_frame(scp);
         avs_release_video_frame(dst);
+
+        for (int i{ 0 }; i < 4; ++i)
+            avs_release_video_frame(pad[i]);
 
         return nullptr;
     }
@@ -562,6 +566,10 @@ static AVS_VideoFrame* AVSC_CC get_frame_EEDI3CL(AVS_FilterInfo* fi, int n)
     }
 
     avs_release_video_frame(src);
+    avs_release_video_frame(scp);
+
+    for (int i{ 0 }; i < 4; ++i)
+        avs_release_video_frame(pad[i]);
 
     return dst;
 }
