@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cfloat>
+
 #include "avisynth_c.h"
 #include "VCL2/vectorclass.h"
 
