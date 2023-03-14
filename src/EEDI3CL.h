@@ -43,7 +43,7 @@ struct EEDI3CLData
     int* fpath;
     int* dmap;
     int* tline;
-    std::unique_ptr<char[]> err;
+    std::string err;
 
     void (*filter)(const AVS_VideoFrame*, const AVS_VideoFrame*, AVS_VideoFrame*, AVS_VideoFrame**, const int, const EEDI3CLData* const __restrict);
 };

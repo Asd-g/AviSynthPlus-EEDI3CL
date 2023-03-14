@@ -13,7 +13,7 @@ This is [a port of the VapourSynth plugin EEDI3CL](https://github.com/HomeOfVapo
 ### Usage:
 
 ```
-EEDI3CL(clip input, int "field", bool "dh", int[] "planes", float "alpha", float "beta", float "gamma", int "nrad", int "mdis", bool "hp", bool "ucubic", bool "cost3", int "vcheck", float "vthresh0", float "vthresh1", float "vthresh2", clip "sclip", int "opt", int "device", bool "list_device", bool "info")
+EEDI3CL(clip input, int "field", bool "dh", int[] "planes", float "alpha", float "beta", float "gamma", int "nrad", int "mdis", bool "hp", bool "ucubic", bool "cost3", int "vcheck", float "vthresh0", float "vthresh1", float "vthresh2", clip "sclip", int "opt", int "device", bool "list_device", bool "info", bool "luma")
 ```
 
 ### Parameters:
@@ -138,6 +138,11 @@ EEDI3CL(clip input, int "field", bool "dh", int[] "planes", float "alpha", float
 
 - info\
     Whether to draw the OpenCL-related info on the frame.
+
+- luma\
+    Whether the format of the output video is Y when only luma plane is processed.\
+    It has effect only for YUV clips.\
+    Default: False.
 
 ### Building:
 

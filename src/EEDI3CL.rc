@@ -1,13 +1,10 @@
 #include <winver.h>
 
-VS_VERSION_INFO VERSIONINFO
-FILEVERSION             1,0,0,0
-PRODUCTVERSION        	1,0,0,0
-FILEFLAGSMASK           VS_FFI_FILEFLAGSMASK
-FILEFLAGS               0x0L
+1 VERSIONINFO
+FILEVERSION             1,0,1,0
+PRODUCTVERSION        	1,0,1,0
 FILEOS                  VOS__WINDOWS32
 FILETYPE                VFT_DLL
-FILESUBTYPE             VFT2_UNKNOWN
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
@@ -15,11 +12,11 @@ BEGIN
         BEGIN
         VALUE "Comments",         "EEDI3 OpenCL filter."
         VALUE "FileDescription",  "EEDI3CL for AviSynth+."
-        VALUE "FileVersion",      "1.0.0"
+        VALUE "FileVersion",      "1.0.1"
         VALUE "InternalName",     "EEDI3CL"
         VALUE "OriginalFilename", "EEDI3CL.dll"
         VALUE "ProductName",      "EEDI3CL"
-        VALUE "ProductVersion",   "1.0.0"
+        VALUE "ProductVersion",   "1.0.1"
         END
     END
     BLOCK "VarFileInfo"
