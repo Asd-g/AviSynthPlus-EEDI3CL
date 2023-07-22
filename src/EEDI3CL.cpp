@@ -34,7 +34,8 @@
 
 AVS_FORCEINLINE void* aligned_malloc(size_t size, size_t align)
 {
-    void* result = [&]() {
+    void* result = [&]()
+    {
 #ifdef _MSC_VER 
         return _aligned_malloc(size, align);
 #else 
@@ -604,7 +605,19 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
 
     d->sclip = (avs_defined(avs_array_elt(args, Sclip))) ? avs_take_clip(avs_array_elt(args, Sclip), env) : nullptr;
 
-    try {
+    try
+    {
+        if (!avs_check_version(env, 9))
+        {
+            if (avs_check_version(env, 10))
+            {
+                if (avs_get_env_property(env, AVS_AEP_INTERFACE_BUGFIX) < 2)
+                    throw std::string{ "AviSynth + version must be r3688 or later." };
+            }
+        }
+        else
+            throw std::string{ "AviSynth+ version must be r3688 or later." };
+
         if (!avs_is_planar(&d->fi->vi))
             throw std::string{ "only planar format is supported" };
 
@@ -693,7 +706,7 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
                 d->err += std::to_string(i) + ": " + devices[i].name() + " (" + devices[i].platform().name() + ")" + "\n";
 
             AVS_Value cl{ avs_new_value_clip(clip) };
-            AVS_Value args_[2]{ cl , avs_new_value_string(d->err.c_str()) };
+            AVS_Value args_[2]{ cl, avs_new_value_string(d->err.c_str()) };
             v = avs_invoke(d->fi->env, "Text", avs_new_value_array(args_, 2), 0);
 
             avs_release_value(cl);
@@ -861,7 +874,8 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
 
         boost::compute::program program;
 
-        try {
+        try
+        {
             std::ostringstream options;
             options.imbue(std::locale{ "C" });
             options.precision(16);
