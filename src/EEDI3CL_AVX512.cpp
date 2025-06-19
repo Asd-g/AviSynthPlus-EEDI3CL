@@ -1,12 +1,12 @@
 #include "EEDI3CL.h"
 #include "VCL2/vectorclass.h"
 
-using V_float = Vec4f;
+using V_float = Vec16f;
 using V_int = std::conditional_t <std::is_same_v<V_float, Vec4f>, Vec4i, std::conditional_t<std::is_same_v<V_float, Vec8f>, Vec8i, Vec16i>>;
 using V_ibool = std::conditional_t <std::is_same_v<V_float, Vec4f>, Vec4ib, std::conditional_t<std::is_same_v<V_float, Vec8f>, Vec8ib, Vec16ib>>;
 
 template<typename T>
-void filterCL_sse2(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi)
+void filterCL_avx512(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi)
 {
     constexpr int planes_y[4]{ AVS_PLANAR_Y, AVS_PLANAR_U, AVS_PLANAR_V, AVS_PLANAR_A };
     constexpr int planes_r[4]{ AVS_PLANAR_R, AVS_PLANAR_G, AVS_PLANAR_B, AVS_PLANAR_A };
@@ -56,8 +56,8 @@ void filterCL_sse2(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* _
             int* fpath_line{ d->fpath };
             int* fpath_all_lines{ d->dmap };
 
-            const size_t globalWorkSize[]{ static_cast<size_t>((dstWidth + 15) & -16), static_cast<size_t>(d->vectorSize) };
-            constexpr size_t localWorkSize[]{ 16, 4 };
+            const size_t globalWorkSize[]{ static_cast<size_t>((dstWidth + 3) & -4), static_cast<size_t>(d->vectorSize) };
+            constexpr size_t localWorkSize[]{ 4, 16 };
             const int bufferSize{ static_cast<int>(dstWidth * d->tpitchVector * sizeof(cl_float)) };
 
             queue.enqueue_write_image(srcImage, boost::compute::dim(0, 0), boost::compute::dim(paddedWidth, paddedHeight),
@@ -82,7 +82,7 @@ void filterCL_sse2(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* _
                     const int umax2{ std::min({ x - 1, dstWidth - x, d->mdis }) };
                     for (int u{ -umax }; u <= umax; ++u)
                     {
-                        V_int idx{ zero_si128() };
+                        V_int idx{ zero_si512() };
                         V_float bval{ FLT_MAX };
 
                         for (int v{ std::max(-umax2, u - 1) }; v <= std::min(umax2, u + 1); ++v)
@@ -158,6 +158,6 @@ void filterCL_sse2(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* _
     d->queue.finish();
 }
 
-template void filterCL_sse2<uint8_t>(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
-template void filterCL_sse2<uint16_t>(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
-template void filterCL_sse2<float>(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
+template void filterCL_avx512<uint8_t>(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
+template void filterCL_avx512<uint16_t>(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
+template void filterCL_avx512<float>(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);

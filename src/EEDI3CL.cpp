@@ -23,33 +23,36 @@
 **   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
+#include <algorithm>
 #include <locale>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #include "EEDI3CL.cl"
 #include "EEDI3CL.h"
+#include "EEDI3CL_kernels.cl"
 
 
-AVS_FORCEINLINE void* aligned_malloc(size_t size, size_t align)
+AVS_FORCEINLINE void* aligned_malloc(size_t size, size_t align) noexcept
 {
-    void* result = [&]()
+    void* result{ [&]()
     {
 #ifdef _MSC_VER 
         return _aligned_malloc(size, align);
 #else 
         if (posix_memalign(&result, align, size))
-            return result = nullptr;
+            return nullptr;
         else
             return result;
 #endif
-    }();
+    }() };
 
     return result;
 }
 
-AVS_FORCEINLINE void aligned_free(void* ptr)
+AVS_FORCEINLINE void aligned_free(void* ptr) noexcept
 {
 #ifdef _MSC_VER 
     _aligned_free(ptr);
@@ -59,15 +62,15 @@ AVS_FORCEINLINE void aligned_free(void* ptr)
 }
 
 template<typename T>
-void copyPlane(void* __restrict dstp_, const int dstStride, const void* srcp_, const int srcStride, const int width, const int height) noexcept
+void copyPlane(
+    void* __restrict dstp_, const int dstStride, const void* __restrict srcp_, const int srcStride, const int width, const int height) noexcept
 {
-    const T* srcp = reinterpret_cast<const T*>(srcp_);
-    T* __restrict dstp = reinterpret_cast<T*>(dstp_);
+    const T* __restrict srcp{ reinterpret_cast<const T*>(srcp_) };
+    T* __restrict dstp{ reinterpret_cast<T*>(dstp_) };
 
     for (int y{ 0 }; y < height; ++y)
     {
-        for (int x{ 0 }; x < width; ++x)
-            dstp[x] = srcp[x];
+        std::copy_n(srcp, width, dstp);
 
         srcp += srcStride;
         dstp += dstStride;
@@ -75,7 +78,7 @@ void copyPlane(void* __restrict dstp_, const int dstStride, const void* srcp_, c
 }
 
 template<typename T>
-void copyPad(const AVS_VideoFrame* src, AVS_VideoFrame* dst, const int plane, const int plane0, const int off, const bool dh, AVS_ScriptEnvironment* env) noexcept
+void copyPad(const AVS_VideoFrame* __restrict src, AVS_VideoFrame* __restrict dst, const int plane, const int plane0, const int off, const bool dh, AVS_ScriptEnvironment* __restrict env) noexcept
 {
     const int srcWidth{ static_cast<int>(avs_get_row_size_p(src, plane) / sizeof(T)) };
     const int dstWidth{ static_cast<int>(avs_get_row_size_p(dst, plane0) / sizeof(T)) };
@@ -83,13 +86,13 @@ void copyPad(const AVS_VideoFrame* src, AVS_VideoFrame* dst, const int plane, co
     const int dstHeight{ avs_get_height_p(dst, plane0) };
     const int srcStride{ static_cast<int>(avs_get_pitch_p(src, plane) / sizeof(T)) };
     const int dstStride{ static_cast<int>(avs_get_pitch_p(dst, plane0) / sizeof(T)) };
-    const T* srcp{ reinterpret_cast<const T*>(avs_get_read_ptr_p(src, plane)) };
+    const T* __restrict srcp{ reinterpret_cast<const T*>(avs_get_read_ptr_p(src, plane)) };
     T* __restrict dstp{ reinterpret_cast<T*>(avs_get_write_ptr_p(dst, plane0)) };
 
-    if (!dh)
-        copyPlane<T>(dstp + dstStride * (4 + off) + 12, dstStride * 2, srcp + srcStride * off, srcStride * 2, srcWidth, srcHeight / 2);
-    else
+    if (dh)
         copyPlane<T>(dstp + dstStride * (4 + off) + 12, dstStride * 2, srcp, srcStride, srcWidth, srcHeight);
+    else
+        copyPlane<T>(dstp + dstStride * (4 + off) + 12, dstStride * 2, srcp + srcStride * off, srcStride * 2, srcWidth, srcHeight / 2);
 
     dstp += dstStride * (4 + off);
 
@@ -113,263 +116,77 @@ void copyPad(const AVS_VideoFrame* src, AVS_VideoFrame* dst, const int plane, co
         memcpy(dstp + dstStride * y, dstp + dstStride * (y - c), dstWidth * sizeof(T));
 }
 
-template<typename T>
-inline void interpolate(const T* src3p, const T* src1p, const T* src1n, const T* src3n, const bool* bmask, const int* fpath, int* __restrict dmap, T* __restrict dstp, const int width, const bool ucubic, const int peak) noexcept
-{
-    if constexpr (std::is_integral_v<T>)
-    {
-        for (int x{ 0 }; x < width; ++x)
-        {
-            if (bmask && !bmask[x])
-            {
-                dmap[x] = 0;
-
-                if (ucubic)
-                    dstp[x] = std::min(std::max((9 * (src1p[x] + src1n[x]) - (src3p[x] + src3n[x]) + 8) >> 4, 0), peak);
-                else
-                    dstp[x] = (src1p[x] + src1n[x] + 1) >> 1;
-            }
-            else
-            {
-                const int dir{ fpath[x] };
-                const int dir3{ dir * 3 };
-                const int absDir3{ std::abs(dir3) };
-
-                dmap[x] = dir;
-
-                if (ucubic && x >= absDir3 && x <= width - 1 - absDir3)
-                    dstp[x] = std::min(std::max((9 * (src1p[x + dir] + src1n[x - dir]) - (src3p[x + dir3] + src3n[x - dir3]) + 8) >> 4, 0), peak);
-                else
-                    dstp[x] = (src1p[x + dir] + src1n[x - dir] + 1) >> 1;
-            }
-        }
-    }
-    else
-    {
-        for (int x{ 0 }; x < width; ++x)
-        {
-            if (bmask && !bmask[x])
-            {
-                dmap[x] = 0;
-
-                if (ucubic)
-                    dstp[x] = 0.5625f * (src1p[x] + src1n[x]) - 0.0625f * (src3p[x] + src3n[x]);
-                else
-                    dstp[x] = (src1p[x] + src1n[x]) / 2.0f;
-            }
-            else
-            {
-                const int dir{ fpath[x] };
-                const int dir3{ dir * 3 };
-                const int absDir3{ std::abs(dir3) };
-
-                dmap[x] = dir;
-
-                if (ucubic && x >= absDir3 && x <= width - 1 - absDir3)
-                    dstp[x] = 0.5625f * (src1p[x + dir] + src1n[x - dir]) - 0.0625f * (src3p[x + dir3] + src3n[x - dir3]);
-                else
-                    dstp[x] = (src1p[x + dir] + src1n[x - dir]) / 2.0f;
-            }
-        }
-    }
-}
-
-template<typename T>
-void vCheck(const T* srcp, const T* scpp, T* __restrict dstp, const int* dmap, void* _tline, const int field_n, const int dstWidth, const int srcHeight, const int srcStride, const int dstStride, const int vcheck,
-    const float vthresh2, const float rcpVthresh0, const float rcpVthresh1, const float rcpVthresh2, const int peak) noexcept
-{
-    if constexpr (std::is_integral_v<T>)
-    {
-        for (int y{ 4 + field_n }; y < srcHeight - 4; y += 2)
-        {
-            if (y >= 6 && y < srcHeight - 6)
-            {
-                const T* dst3p{ srcp - srcStride * 3 };
-                const T* dst2p{ dstp - dstStride * 2 };
-                const T* dst1p{ dstp - dstStride };
-                const T* dst1n{ dstp + dstStride };
-                const T* dst2n{ dstp + dstStride * 2 };
-                const T* dst3n{ srcp + srcStride * 3 };
-                T* __restrict tline{ reinterpret_cast<T*>(_tline) };
-
-                for (int x{ 0 }; x < dstWidth; ++x)
-                {
-                    const int dirc{ dmap[x] };
-                    const T cint{ static_cast<T>(scpp ? scpp[x] : std::min(std::max((9 * (dst1p[x] + dst1n[x]) - (dst3p[x] + dst3n[x]) + 8) >> 4, 0), peak)) };
-
-                    if (dirc == 0)
-                    {
-                        tline[x] = cint;
-                        continue;
-                    }
-
-                    const int dirt{ dmap[x - dstWidth] };
-                    const int dirb{ dmap[x + dstWidth] };
-
-                    if (std::max(dirc * dirt, dirc * dirb) < 0 || (dirt == dirb && dirt == 0))
-                    {
-                        tline[x] = cint;
-                        continue;
-                    }
-
-                    const int it{ (dst2p[x + dirc] + dstp[x - dirc] + 1) >> 1 };
-                    const int vt{ std::abs(dst2p[x + dirc] - dst1p[x + dirc]) + std::abs(dstp[x + dirc] - dst1p[x + dirc]) };
-                    const int ib{ (dstp[x + dirc] + dst2n[x - dirc] + 1) >> 1 };
-                    const int vb{ std::abs(dst2n[x - dirc] - dst1n[x - dirc]) + std::abs(dstp[x - dirc] - dst1n[x - dirc]) };
-                    const int vc{ std::abs(dstp[x] - dst1p[x]) + std::abs(dstp[x] - dst1n[x]) };
-
-                    const int d0{ std::abs(it - dst1p[x]) };
-                    const int d1{ std::abs(ib - dst1n[x]) };
-                    const int d2{ std::abs(vt - vc) };
-                    const int d3{ std::abs(vb - vc) };
-
-                    const int mdiff0{ (vcheck == 1) ? std::min(d0, d1) : (vcheck == 2 ? (d0 + d1 + 1) >> 1 : std::max(d0, d1)) };
-                    const int mdiff1{ (vcheck == 1) ? std::min(d2, d3) : (vcheck == 2 ? (d2 + d3 + 1) >> 1 : std::max(d2, d3)) };
-
-                    const float a0{ mdiff0 * rcpVthresh0 };
-                    const float a1{ mdiff1 * rcpVthresh1 };
-                    const float a2{ std::max((vthresh2 - std::abs(dirc)) * rcpVthresh2, 0.0f) };
-                    const float a{ std::min(std::max({ a0, a1, a2 }), 1.0f) };
-
-                    tline[x] = static_cast<T>((1.0f - a) * dstp[x] + a * cint);
-                }
-
-                memcpy(dstp, tline, dstWidth * sizeof(T));
-            }
-
-            srcp += srcStride * 2;
-            if (scpp)
-                scpp += dstStride * 2;
-            dstp += dstStride * 2;
-            dmap += dstWidth;
-        }
-    }
-    else
-    {
-        for (int y{ 4 + field_n }; y < srcHeight - 4; y += 2)
-        {
-            if (y >= 6 && y < srcHeight - 6)
-            {
-                const float* dst3p{ srcp - srcStride * 3 };
-                const float* dst2p{ dstp - dstStride * 2 };
-                const float* dst1p{ dstp - dstStride };
-                const float* dst1n{ dstp + dstStride };
-                const float* dst2n{ dstp + dstStride * 2 };
-                const float* dst3n{ srcp + srcStride * 3 };
-                float* __restrict tline{ reinterpret_cast<float*>(_tline) };
-
-                for (int x{ 0 }; x < dstWidth; ++x)
-                {
-                    const int dirc{ dmap[x] };
-                    const float cint{ scpp ? scpp[x] : 0.5625f * (dst1p[x] + dst1n[x]) - 0.0625f * (dst3p[x] + dst3n[x]) };
-
-                    if (dirc == 0)
-                    {
-                        tline[x] = cint;
-                        continue;
-                    }
-
-                    const int dirt{ dmap[x - dstWidth] };
-                    const int dirb{ dmap[x + dstWidth] };
-
-                    if (std::max(dirc * dirt, dirc * dirb) < 0 || (dirt == dirb && dirt == 0))
-                    {
-                        tline[x] = cint;
-                        continue;
-                    }
-
-                    const float it{ (dst2p[x + dirc] + dstp[x - dirc]) / 2.0f };
-                    const float vt{ std::abs(dst2p[x + dirc] - dst1p[x + dirc]) + std::abs(dstp[x + dirc] - dst1p[x + dirc]) };
-                    const float ib{ (dstp[x + dirc] + dst2n[x - dirc]) / 2.0f };
-                    const float vb{ std::abs(dst2n[x - dirc] - dst1n[x - dirc]) + std::abs(dstp[x - dirc] - dst1n[x - dirc]) };
-                    const float vc{ std::abs(dstp[x] - dst1p[x]) + std::abs(dstp[x] - dst1n[x]) };
-
-                    const float d0{ std::abs(it - dst1p[x]) };
-                    const float d1{ std::abs(ib - dst1n[x]) };
-                    const float d2{ std::abs(vt - vc) };
-                    const float d3{ std::abs(vb - vc) };
-
-                    const float mdiff0{ (vcheck == 1) ? std::min(d0, d1) : (vcheck == 2 ? (d0 + d1) / 2.0f : std::max(d0, d1)) };
-                    const float mdiff1{ (vcheck == 1) ? std::min(d2, d3) : (vcheck == 2 ? (d2 + d3) / 2.0f : std::max(d2, d3)) };
-
-                    const float a0{ mdiff0 * rcpVthresh0 };
-                    const float a1{ mdiff1 * rcpVthresh1 };
-                    const float a2{ std::max((vthresh2 - std::abs(dirc)) * rcpVthresh2, 0.0f) };
-                    const float a{ std::min(std::max({ a0, a1, a2 }), 1.0f) };
-
-                    tline[x] = (1.0f - a) * dstp[x] + a * cint;
-                }
-
-                memcpy(dstp, tline, dstWidth * sizeof(float));
-            }
-
-            srcp += srcStride * 2;
-            if (scpp)
-                scpp += dstStride * 2;
-            dstp += dstStride * 2;
-            dmap += dstWidth;
-        }
-    }
-}
-
-template<typename T>
-static void filterCL_c(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, AVS_VideoFrame** pad, const int field_n, const EEDI3CLData* const __restrict d)
+static void filterCL_c(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi)
 {
     constexpr int planes_y[4]{ AVS_PLANAR_Y, AVS_PLANAR_U, AVS_PLANAR_V, AVS_PLANAR_A };
     constexpr int planes_r[4]{ AVS_PLANAR_R, AVS_PLANAR_G, AVS_PLANAR_B, AVS_PLANAR_A };
-    const int* planes{ (avs_is_rgb(&d->fi->vi) ? planes_r : planes_y) };
+    const bool is_rgb{ !!avs_is_rgb(&fi->vi) };
+    const int* planes{ (is_rgb) ? planes_r : planes_y };
+    const int comp_size{ avs_component_size(&fi->vi) };
 
-    for (int plane{ 0 }; plane < avs_num_components(&d->fi->vi); ++plane)
+    for (int plane{ 0 }; plane < avs_num_components(&fi->vi); ++plane)
     {
         if (d->process[plane])
         {
-            copyPad<T>(src, pad[plane], planes[plane], planes[0], 1 - field_n, d->dh, d->fi->env);
+            const int current_plane{ planes[plane] };
 
-            const int srcWidth{ static_cast<int>(avs_get_row_size_p(pad[plane], planes[0]) / sizeof(T)) };
-            const int dstWidth{ static_cast<int>(avs_get_row_size_p(dst, planes[plane]) / sizeof(T)) };
-            const int srcHeight{ avs_get_height_p(pad[plane], planes[0]) };
-            const int dstHeight{ avs_get_height_p(dst, planes[plane]) };
-            const int srcStride{ static_cast<int>(avs_get_pitch_p(pad[plane], planes[0]) / sizeof(T)) };
-            const int dstStride{ static_cast<int>(avs_get_pitch_p(dst, planes[plane]) / sizeof(T)) };
-            const T* _srcp{ reinterpret_cast<const T*>(avs_get_read_ptr_p(pad[plane], planes[0])) };
-            T* __restrict _dstp{ reinterpret_cast<T*>(avs_get_write_ptr_p(dst, planes[plane])) };
+            AVS_VideoInfo vi_pad;
+            memcpy(&vi_pad, &fi->vi, sizeof(AVS_VideoInfo));
+            vi_pad.pixel_type = AVS_CS_GENERIC_Y;
+            const int src_h_for_pad{ (use_dh) ? (avs_get_height_p(src, current_plane) << 1) : avs_get_height_p(src, current_plane) };
+            vi_pad.width = avs_get_row_size_p(src, current_plane) + 24 * avs_component_size(&fi->vi);
+            vi_pad.height = src_h_for_pad + 8;
+            AVS_VideoFrame* pad{ avs_new_video_frame(fi->env, &vi_pad) };
 
-            auto queue{ d->queue };
-            auto calculateConnectionCosts{ d->calculateConnectionCosts };
-            auto srcImage{ d->src };
-            auto _ccosts{ d->ccosts };
+            int peak{ d->peak };
+
+            switch (comp_size)
+            {
+            case 1:
+                copyPad<uint8_t>(src, pad, current_plane, AVS_DEFAULT_PLANE, 1 - field_n, use_dh, fi->env);
+                break;
+            case 2:
+                copyPad<uint16_t>(src, pad, current_plane, AVS_DEFAULT_PLANE, 1 - field_n, use_dh, fi->env);
+                break;
+            case 4:
+                copyPad<float>(src, pad, current_plane, AVS_DEFAULT_PLANE, 1 - field_n, use_dh, fi->env);
+                peak = (plane == 0 || is_rgb) ? 1 : 0;
+                break;
+            default:
+                break;
+            }
+
+            const int paddedWidth{ static_cast<int>(avs_get_row_size_p(pad, AVS_DEFAULT_PLANE) / comp_size) };
+            const int dstWidth{ static_cast<int>(avs_get_row_size_p(dst, current_plane) / comp_size) };
+            const int paddedHeight{ avs_get_height_p(pad, AVS_DEFAULT_PLANE) };
+            const int dstHeight{ avs_get_height_p(dst, current_plane) };
+            void* __restrict _dstp{ avs_get_write_ptr_p(dst, current_plane) };
+
+            auto& queue{ d->queue };
+            auto& calculateConnectionCosts{ d->calculateConnectionCosts };
+            auto& srcImage{ d->src };
+            auto& dstImage{ d->dst };
+            auto& vcheckTmpImage{ d->vcheck_tmp };
+            auto& _ccosts{ d->ccosts };
             float* pcosts{ d->pcosts + d->mdis };
             int* pbackt{ d->pbackt + d->mdis };
-            int* fpath{ d->fpath };
-            int* _dmap{ d->dmap };
-            int* tline{ d->tline };
+            int* fpath_line{ d->fpath };
+            int* fpath_all_lines{ d->dmap };
 
-            const size_t globalWorkSize[] = { static_cast<size_t>((dstWidth + 63) & -64), 1 };
-            constexpr size_t localWorkSize[] = { 64, 1 };
+            const size_t globalWorkSize[]{ static_cast<size_t>((dstWidth + 63) & -64), 1 };
+            constexpr size_t localWorkSize[]{ 64, 1 };
             const int bufferSize{ static_cast<int>(dstWidth * d->tpitch * sizeof(cl_float)) };
 
-            copyPlane<T>(_dstp + dstStride * (1 - field_n), dstStride * 2, _srcp + srcStride * (4 + 1 - field_n) + 12, srcStride * 2, dstWidth, dstHeight / 2);
+            queue.enqueue_write_image(srcImage, boost::compute::dim(0, 0), boost::compute::dim(paddedWidth, paddedHeight),
+                avs_get_read_ptr_p(pad, AVS_DEFAULT_PLANE), avs_get_pitch_p(pad, AVS_DEFAULT_PLANE));
 
-            queue.enqueue_write_image(srcImage, boost::compute::dim(0, 0), boost::compute::dim(srcWidth, srcHeight), _srcp, avs_get_pitch_p(pad[plane], planes[0]));
-
-            for (int y{ 4 + field_n }; y < srcHeight - 4; y += 2)
+            for (int y{ 4 + field_n }; y < paddedHeight - 4; y += 2)
             {
-                const int off{ (y - 4 - field_n) >> 1 };
-                const T* srcp{ _srcp + srcStride * (4 + field_n + 2 * off) + 12 };
-                T* dstp{ _dstp + dstStride * (field_n + 2 * off) };
-                int* dmap{ _dmap + dstWidth * off };
-
-                const T* src3p{ srcp - srcStride * 3 };
-                const T* src1p{ srcp - srcStride };
-                const T* src1n{ srcp + srcStride };
-                const T* src3n{ srcp + srcStride * 3 };
-
-                calculateConnectionCosts.set_args(srcImage, _ccosts, dstWidth, srcHeight - 4, y);
+                calculateConnectionCosts.set_args(srcImage, _ccosts, dstWidth, paddedHeight - 4, y, static_cast<cl_int>(d->ucubic), peak);
                 queue.enqueue_nd_range_kernel(calculateConnectionCosts, 2, nullptr, globalWorkSize, localWorkSize);
 
                 float* ccosts{ reinterpret_cast<float*>(queue.enqueue_map_buffer(_ccosts, CL_MAP_READ, 0, bufferSize)) + d->mdis };
 
-                // calculate path costs
                 *pcosts = *ccosts;
                 for (int x{ 1 }; x < dstWidth; ++x)
                 {
@@ -402,32 +219,60 @@ static void filterCL_c(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS
                     }
                 }
 
-                // backtrack
-                fpath[dstWidth - 1] = 0;
-                for (int x{ dstWidth - 2 }; x >= 0; --x)
-                    fpath[x] = pbackt[d->tpitch * x + fpath[x + 1]];
+                fpath_line[dstWidth - 1] = 0;
 
-                interpolate<T>(src3p, src1p, src1n, src3n, nullptr, fpath, dmap, dstp, dstWidth, d->ucubic, d->peak);
+                for (int x{ dstWidth - 2 }; x >= 0; --x)
+                    fpath_line[x] = pbackt[d->tpitch * x + fpath_line[x + 1]];
+
+                const int line_idx{ (y - 4 - field_n) / 2 };
+                memcpy(fpath_all_lines + static_cast<size_t>(line_idx) * dstWidth, fpath_line, dstWidth * sizeof(int));
 
                 queue.enqueue_unmap_buffer(_ccosts, ccosts - d->mdis);
             }
 
+            queue.enqueue_write_buffer(d->fpath_gpu, 0, static_cast<size_t>(dstWidth) * (dstHeight / 2) * sizeof(int), fpath_all_lines);
+
+            const size_t apply_gws[2]{ static_cast<size_t>((dstWidth + 15) & -16), static_cast<size_t>((dstHeight / 2 + 15) & -16) };
+            const size_t apply_lws[2]{ 16, 16 };
+
+            d->applyInterpolationKernel.set_args(srcImage, dstImage, d->fpath_gpu, d->dmap_gpu, dstWidth, dstHeight, field_n, static_cast<cl_int>(d->ucubic), static_cast<cl_int>(use_dh), peak);
+            queue.enqueue_nd_range_kernel(d->applyInterpolationKernel, 2, nullptr, apply_gws, apply_lws);
+
+            boost::compute::image2d* final_image{ &dstImage };
+
             if (d->vcheck)
             {
-                const T* srcp{ _srcp + srcStride * (4 + field_n) + 12 };
-                const T* scpp{ nullptr };
-                if (d->sclip)
-                    scpp = reinterpret_cast<const T*>(avs_get_read_ptr_p(scp, planes[plane])) + dstStride * field_n;
-                T* dstp{ _dstp + dstStride * field_n };
+                boost::compute::buffer sclip_buffer;
+                int sclip_stride_arg{};
+                cl_int use_sclip{};
 
-                vCheck<T>(srcp, scpp, dstp, _dmap, tline, field_n, dstWidth, srcHeight, srcStride, dstStride, d->vcheck, d->vthresh2, d->rcpVthresh0, d->rcpVthresh1, d->rcpVthresh2, d->peak);
+                if (d->sclip)
+                {
+                    use_sclip = 1;
+                    const void* scpp{ avs_get_read_ptr_p(scp, current_plane) };
+                    sclip_stride_arg = avs_get_pitch_p(scp, current_plane);
+                    const size_t sclip_size{ static_cast<size_t>(sclip_stride_arg) * avs_get_height_p(scp, current_plane) };
+                    sclip_buffer = boost::compute::buffer(queue.get_context(), sclip_size, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, const_cast<void*>(scpp));
+                }
+                else
+                    sclip_buffer = boost::compute::buffer(queue.get_context(), 1, CL_MEM_READ_ONLY);
+
+                d->vCheckKernel.set_args(srcImage, dstImage, vcheckTmpImage, d->dmap_gpu, sclip_buffer, use_sclip, dstWidth, dstHeight, sclip_stride_arg, field_n, d->vcheck, d->vthresh2, d->rcpVthresh0, d->rcpVthresh1, d->rcpVthresh2, peak);
+                queue.enqueue_nd_range_kernel(d->vCheckKernel, 2, nullptr, apply_gws, apply_lws);
+                final_image = &vcheckTmpImage;
             }
+
+            queue.enqueue_read_image(*final_image, boost::compute::dim(0, 0), boost::compute::dim(dstWidth, dstHeight), _dstp, avs_get_pitch_p(dst, current_plane));
+
+            avs_release_video_frame(pad);
         }
     }
+
+    d->queue.finish();
 }
 
 /* multiplies and divides a rational number, such as a frame duration, in place and reduces the result */
-AVS_FORCEINLINE void muldivRational(unsigned* num, unsigned* den, int64_t mul, int64_t div)
+AVS_FORCEINLINE void muldivRational(unsigned* __restrict num, unsigned* __restrict den, int64_t mul, int64_t div) noexcept
 {
     /* do nothing if the rational number is invalid */
     if (!*den)
@@ -454,11 +299,64 @@ AVS_FORCEINLINE void muldivRational(unsigned* num, unsigned* den, int64_t mul, i
     *den /= static_cast<unsigned>(a);
 }
 
-static AVS_VideoFrame* AVSC_CC get_frame_EEDI3CL(AVS_FilterInfo* fi, int n)
+static void transpose_video_frame_cl(AVS_VideoFrame* __restrict dst, const AVS_VideoFrame* __restrict src, EEDI3CLData* __restrict d, const AVS_VideoInfo* __restrict vi)
+{
+    const int planes_y[4]{ AVS_PLANAR_Y, AVS_PLANAR_U, AVS_PLANAR_V, AVS_PLANAR_A };
+    const int planes_r[4]{ AVS_PLANAR_R, AVS_PLANAR_G, AVS_PLANAR_B, AVS_PLANAR_A };
+    const int* planes{ (avs_is_rgb(vi) ? planes_r : planes_y) };
+    auto& queue = d->queue;
+
+    for (int i{ 0 }; i < avs_num_components(vi); ++i)
+    {
+        if (d->process[i])
+        {
+            const int plane{ planes[i] };
+
+            const int comp_size{ avs_component_size(vi) };
+            const int src_w{ avs_get_row_size_p(src, plane) / comp_size };
+            const int src_h{ avs_get_height_p(src, plane) };
+            const int src_pitch{ avs_get_pitch_p(src, plane) };
+            const int dst_pitch{ avs_get_pitch_p(dst, plane) };
+            const void* srcp{ avs_get_read_ptr_p(src, plane) };
+            void* dstp{ avs_get_write_ptr_p(dst, plane) };
+
+            const size_t src_buffer_size{ static_cast<size_t>(src_pitch) * src_h };
+            const size_t dst_buffer_size{ static_cast<size_t>(dst_pitch) * src_w };
+
+            boost::compute::buffer src_buf(queue.get_context(), src_buffer_size, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, const_cast<void*>(srcp));
+            boost::compute::buffer dst_buf(queue.get_context(), dst_buffer_size, CL_MEM_WRITE_ONLY);
+
+            constexpr size_t TILE_DIM{ 16 };
+            const size_t global_work_size[2] = {
+                (static_cast<size_t>(src_w) + TILE_DIM - 1) / TILE_DIM * TILE_DIM,
+                (static_cast<size_t>(src_h) + TILE_DIM - 1) / TILE_DIM * TILE_DIM
+            };
+            const size_t local_work_size[2] = { TILE_DIM, TILE_DIM };
+
+            auto run_kernel{ [&](auto& kernel) {
+                kernel.set_args(src_buf, dst_buf, src_w, src_h, static_cast<int>(src_pitch / comp_size), static_cast<int>(dst_pitch / comp_size));
+                queue.enqueue_nd_range_kernel(kernel, 2, nullptr, global_work_size, local_work_size);
+                } };
+
+            switch (comp_size)
+            {
+            case 1: run_kernel(d->transpose_u8_kernel); break;
+            case 2: run_kernel(d->transpose_u16_kernel); break;
+            default: run_kernel(d->transpose_f32_kernel); break;
+            }
+
+            queue.enqueue_read_buffer(dst_buf, 0, dst_buffer_size, dstp);
+        }
+    }
+
+    queue.finish();
+}
+
+static AVS_VideoFrame* AVSC_CC get_frame_EEDI3CL(AVS_FilterInfo* __restrict fi, int n)
 {
     EEDI3CLData* d{ static_cast<EEDI3CLData*>(fi->user_data) };
 
-    const int field_no_prop = [&]()
+    const int field_no_prop{ [&]()
     {
         if (d->field == -1)
             return (avs_get_parity(fi->child, n)) ? 1 : 0;
@@ -466,31 +364,19 @@ static AVS_VideoFrame* AVSC_CC get_frame_EEDI3CL(AVS_FilterInfo* fi, int n)
             return (avs_get_parity(fi->child, n >> 1)) ? 3 : 2;
         else
             return -1;
-    }();
+    }() };
 
     int field{ (d->field > -1) ? d->field : field_no_prop };
 
     AVS_VideoFrame* src{ avs_get_frame(fi->child, (field > 1) ? (n >> 1) : n) };
+
     if (!src)
         return nullptr;
 
+    const AVS_VideoInfo* src_vi{ avs_get_video_info(fi->child) };
+
     AVS_VideoFrame* dst{ avs_new_video_frame_p(fi->env, &fi->vi, src) };
     AVS_VideoFrame* scp{ (d->vcheck && d->sclip) ? avs_get_frame(d->sclip, n) : nullptr };
-    AVS_VideoFrame* pad[4]{};
-
-    const int planes_y[4]{ AVS_PLANAR_Y, AVS_PLANAR_U, AVS_PLANAR_V, AVS_PLANAR_A };
-    const int planes_r[4]{ AVS_PLANAR_R, AVS_PLANAR_G, AVS_PLANAR_B, AVS_PLANAR_A };
-    const int* planes{ (avs_is_rgb(&fi->vi) ? planes_r : planes_y) };
-
-    for (int plane{ 0 }; plane < avs_num_components(&fi->vi); ++plane)
-    {
-        if (d->process[plane])
-        {
-            d->vi_pad.width = avs_get_row_size_p(dst, planes[plane]) + 24 * avs_component_size(&fi->vi);
-            d->vi_pad.height = avs_get_height_p(dst, planes[plane]) + 8;
-            pad[plane] = avs_new_video_frame(fi->env, &d->vi_pad);
-        }
-    }
 
     if (d->field < 0)
     {
@@ -531,7 +417,32 @@ static AVS_VideoFrame* AVSC_CC get_frame_EEDI3CL(AVS_FilterInfo* fi, int n)
 
     try
     {
-        d->filter(src, scp, dst, pad, field, d);
+        if (!d->dw)
+            d->filter(src, scp, dst, field, d->dh, d, fi);
+        else
+        {
+            AVS_VideoInfo vi_inter{ fi->vi };
+            vi_inter.width = src_vi->width;
+            vi_inter.height = (d->dh) ? (src_vi->height << 1) : src_vi->height;
+            AVS_VideoFrame* inter{ avs_new_video_frame(fi->env, &vi_inter) };
+            d->filter(src, nullptr, inter, field, d->dh, d, fi);
+
+            AVS_VideoInfo vi_t_src{ vi_inter };
+            std::swap(vi_t_src.width, vi_t_src.height);
+            AVS_VideoFrame* src_t{ avs_new_video_frame(fi->env, &vi_t_src) };
+
+            AVS_VideoInfo vi_t_dst{ vi_t_src };
+            vi_t_dst.height <<= 1;
+            AVS_VideoFrame* dst_t{ avs_new_video_frame(fi->env, &vi_t_dst) };
+
+            transpose_video_frame_cl(src_t, inter, d, src_vi);
+            d->filter(src_t, nullptr, dst_t, 0, true, d, fi);
+            transpose_video_frame_cl(dst, dst_t, d, src_vi);
+
+            avs_release_video_frame(inter);
+            avs_release_video_frame(src_t);
+            avs_release_video_frame(dst_t);
+        }
     }
     catch (const boost::compute::opencl_error& error)
     {
@@ -541,14 +452,25 @@ static AVS_VideoFrame* AVSC_CC get_frame_EEDI3CL(AVS_FilterInfo* fi, int n)
         avs_release_video_frame(scp);
         avs_release_video_frame(dst);
 
-        for (int i{ 0 }; i < 4; ++i)
-            avs_release_video_frame(pad[i]);
-
         return nullptr;
     }
 
     AVS_Map* props{ avs_get_frame_props_rw(fi->env, dst) };
     avs_prop_set_int(fi->env, props, "_FieldBased", 0, 0);
+
+    if (d->dw)
+    {
+        int errNum;
+        int errDen;
+        unsigned sarNum{ static_cast<unsigned>(avs_prop_get_int(fi->env, props, "_SARNum", 0, &errNum)) };
+        unsigned sarDen{ static_cast<unsigned>(avs_prop_get_int(fi->env, props, "_SARDen", 0, &errDen)) };
+        if (errNum == 0 && errDen == 0)
+        {
+            muldivRational(&sarNum, &sarDen, 1, 2);
+            avs_prop_set_int(fi->env, props, "_SARNum", sarNum, 0);
+            avs_prop_set_int(fi->env, props, "_SARDen", sarDen, 0);
+        }
+    }
 
     if (d->field > 1 || field_no_prop > 1)
     {
@@ -567,13 +489,10 @@ static AVS_VideoFrame* AVSC_CC get_frame_EEDI3CL(AVS_FilterInfo* fi, int n)
     avs_release_video_frame(src);
     avs_release_video_frame(scp);
 
-    for (int i{ 0 }; i < 4; ++i)
-        avs_release_video_frame(pad[i]);
-
     return dst;
 }
 
-static void AVSC_CC free_EEDI3CL(AVS_FilterInfo* fi)
+static void AVSC_CC free_EEDI3CL(AVS_FilterInfo* __restrict fi) noexcept
 {
     EEDI3CLData* d{ static_cast<EEDI3CLData*>(fi->user_data) };
 
@@ -583,24 +502,22 @@ static void AVSC_CC free_EEDI3CL(AVS_FilterInfo* fi)
     delete[] d->fpath;
     delete[] d->dmap;
 
-    if (d->tline)
-        delete[] d->tline;
-
     delete d;
 }
 
-static int AVSC_CC set_cache_hints_EEDI3CL(AVS_FilterInfo* fi, int cachehints, int frame_range)
+static int AVSC_CC set_cache_hints_EEDI3CL(AVS_FilterInfo* __restrict fi, int cachehints, int frame_range) noexcept
 {
     return cachehints == AVS_CACHE_GET_MTMODE ? 2 : 0;
 }
 
-static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value args, void* param)
+static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* __restrict env, AVS_Value args, void* param)
 {
-    enum { Clip, Field, Dh, Planes, Alpha, Beta, Gamma, Nrad, Mdis, Hp, Ucubic, Cost3, Vcheck, Vthresh0, Vthresh1, Vthresh2, Sclip, Opt, Device, List_device, Info, Luma };
+    enum { Clip, Field, Dh, Dw, Planes, Alpha, Beta, Gamma, Nrad, Mdis, Hp, Ucubic, Cost3, Vcheck, Vthresh0, Vthresh1, Vthresh2, Sclip, Opt, Device, List_device, Info, Luma };
 
     EEDI3CLData* d{ new EEDI3CLData() };
 
-    AVS_Clip* clip{ avs_new_c_filter(env, &d->fi, avs_array_elt(args, Clip), 1) };
+    AVS_FilterInfo* fi{};
+    AVS_Clip* clip{ avs_new_c_filter(env, &fi, avs_array_elt(args, Clip), 1) };
     AVS_Value v{ avs_void };
 
     d->sclip = (avs_defined(avs_array_elt(args, Sclip))) ? avs_take_clip(avs_array_elt(args, Sclip), env) : nullptr;
@@ -618,22 +535,34 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
         else
             throw std::string{ "AviSynth+ version must be r3688 or later." };
 
-        if (!avs_is_planar(&d->fi->vi))
+        if (!avs_is_planar(&fi->vi))
             throw std::string{ "only planar format is supported" };
 
         d->field = avs_defined(avs_array_elt(args, Field)) ? avs_as_int(avs_array_elt(args, Field)) : -1;
         d->dh = avs_defined(avs_array_elt(args, Dh)) ? avs_as_bool(avs_array_elt(args, Dh)) : 0;
+        d->dw = avs_defined(avs_array_elt(args, Dw)) ? avs_as_bool(avs_array_elt(args, Dw)) : 0;
 
         const int num_planes{ (avs_defined(avs_array_elt(args, Planes))) ? avs_array_size(avs_array_elt(args, Planes)) : 0 };
+        const int onlyY{ (avs_defined(avs_array_elt(args, Luma))) ? avs_as_bool(avs_array_elt(args, Luma)) : 0 };
 
-        for (int i{ 0 }; i < 4; ++i)
-            d->process[i] = (num_planes <= 0);
+        if (onlyY)
+        {
+            d->process[0] = true;
+
+            for (int i{ 1 }; i < 4; ++i)
+                d->process[i] = false;
+        }
+        else
+        {
+            for (int i{ 0 }; i < 4; ++i)
+                d->process[i] = (num_planes <= 0);
+        }
 
         for (int i{ 0 }; i < num_planes; ++i)
         {
             const int n{ avs_as_int(*(avs_as_array(avs_array_elt(args, Planes)) + i)) };
 
-            if (n >= avs_num_components(&d->fi->vi))
+            if (n >= avs_num_components(&fi->vi))
                 throw std::string{ "plane index out of range" };
 
             if (d->process[n])
@@ -642,16 +571,39 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
             d->process[n] = true;
         }
 
-        const int onlyY{ (avs_defined(avs_array_elt(args, Luma))) ? avs_as_bool(avs_array_elt(args, Luma)) : 0 };
+        const int bit_depth{ avs_bits_per_component(&fi->vi) };
 
-        if (onlyY && !avs_is_rgb(&d->fi->vi))
+        if (onlyY && !avs_is_rgb(&fi->vi))
         {
             if (num_planes > 1)
                 throw std::string{ "luma cannot be true when processed planes are more than 1" };
             if (!d->process[0])
                 throw std::string{ "planes=0 must be used for luma=true" };
 
-            d->fi->vi.pixel_type = AVS_CS_GENERIC_Y;
+            switch (bit_depth)
+            {
+            case 8:
+                fi->vi.pixel_type = AVS_CS_GENERIC_Y | AVS_CS_SAMPLE_BITS_8;
+                break;
+            case 10:
+                fi->vi.pixel_type = AVS_CS_GENERIC_Y | AVS_CS_SAMPLE_BITS_10;
+                break;
+            case 12:
+                fi->vi.pixel_type = AVS_CS_GENERIC_Y | AVS_CS_SAMPLE_BITS_12;
+                break;
+            case 14:
+                fi->vi.pixel_type = AVS_CS_GENERIC_Y | AVS_CS_SAMPLE_BITS_14;
+                break;
+            case 16:
+                fi->vi.pixel_type = AVS_CS_GENERIC_Y | AVS_CS_SAMPLE_BITS_16;
+                break;
+            case 32:
+                fi->vi.pixel_type = AVS_CS_GENERIC_Y | AVS_CS_SAMPLE_BITS_32;
+                break;
+            default:
+                break;
+            }
+            
         }
 
         float alpha{ avs_defined(avs_array_elt(args, Alpha)) ? static_cast<float>(avs_as_float(avs_array_elt(args, Alpha))) : 0.2f };
@@ -670,10 +622,14 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
 
         if (d->field < -2 || d->field > 3)
             throw std::string{ "field must be -2, -1, 0, 1, 2, or 3" };
-        if (!d->dh && (d->fi->vi.height & 1))
+        if (!d->dh && (fi->vi.height & 1))
             throw std::string{ "height must be mod 2 when dh=False" };
         if (d->dh && d->field > 1)
             throw std::string{ "field must be 0 or 1 when dh=True" };
+        if (d->dw && d->field > 1)
+            throw std::string{ "dw=true is not supported with field=2 or 3" };
+        if (d->dw && d->sclip)
+            throw std::string{ "sclip is not supported when dw=true" };
         if (alpha < 0.0f || alpha > 1.0f)
             throw std::string{ "alpha must be between 0.0 and 1.0 (inclusive)" };
         if (beta < 0.0f || beta > 1.0f)
@@ -690,8 +646,17 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
             throw std::string{ "vcheck must be 0, 1, 2, or 3" };
         if (d->vcheck && (vthresh0 <= 0.0f || vthresh1 <= 0.0f || d->vthresh2 <= 0.0f))
             throw std::string{ "vthresh0, vthresh1, and vthresh2 must be greater than 0.0" };
-        if (opt < -1 || opt > 1)
-            throw std::string{ "opt must be -1, 0, or 1" };
+        if (opt < -1 || opt > 3)
+            throw std::string{ "opt must be betwen -1 and 3 (inclusive)" };
+
+        const bool avx512{ !!(avs_get_cpu_flags(fi->env) & AVS_CPUF_AVX512F) && (opt < 0 || opt == 3) };
+        const bool avx2{ !!(avs_get_cpu_flags(fi->env) & AVS_CPUF_AVX2) && (opt < 0 || opt == 2) };
+        const bool sse2{ !!(avs_get_cpu_flags(fi->env) & AVS_CPU_SSE2) && (opt < 0 || opt == 1)};
+
+        if (opt == 2 && !avx2)
+            throw std::string{ "opt=2 requires AVX2" };
+        else if (opt == 1 && !sse2)
+            throw std::string{ "opt=1 requires SSE2" };
 
         if (device_id >= static_cast<int>(boost::compute::system::device_count()))
             throw std::string{ "device index out of range" };
@@ -707,7 +672,7 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
 
             AVS_Value cl{ avs_new_value_clip(clip) };
             AVS_Value args_[2]{ cl, avs_new_value_string(d->err.c_str()) };
-            v = avs_invoke(d->fi->env, "Text", avs_new_value_array(args_, 2), 0);
+            v = avs_invoke(fi->env, "Text", avs_new_value_array(args_, 2), 0);
 
             avs_release_value(cl);
             avs_release_clip(clip);
@@ -720,7 +685,7 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
         if (device_id > -1)
             device = boost::compute::system::devices().at(device_id);
 
-        boost::compute::context context = boost::compute::context{ device };
+        boost::compute::context context{ boost::compute::context{ device } };
 
         if (avs_defined(avs_array_elt(args, Info)) ? avs_as_bool(avs_array_elt(args, Info)) : 0)
         {
@@ -770,7 +735,7 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
 
             AVS_Value cl{ avs_new_value_clip(clip) };
             AVS_Value args_[2]{ cl, avs_new_value_string(d->err.c_str()) };
-            v = avs_invoke(d->fi->env, "Text", avs_new_value_array(args_, 2), 0);
+            v = avs_invoke(fi->env, "Text", avs_new_value_array(args_, 2), 0);
 
             avs_release_value(cl);
             avs_release_clip(clip);
@@ -780,20 +745,27 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
 
         if (d->field == -2 || d->field > 1)
         {
-            if (d->fi->vi.num_frames > INT_MAX / 2)
+            if (fi->vi.num_frames > INT_MAX / 2)
                 throw std::string{ "resulting clip is too long" };
 
-            d->fi->vi.num_frames <<= 1;
+            fi->vi.num_frames <<= 1;
 
-            unsigned fps_n{ d->fi->vi.fps_numerator };
-            unsigned fps_d{ d->fi->vi.fps_denominator };
+            unsigned fps_n{ fi->vi.fps_numerator };
+            unsigned fps_d{ fi->vi.fps_denominator };
             muldivRational(&fps_n, &fps_d, 2, 1);
-            d->fi->vi.fps_numerator = static_cast<unsigned>(fps_n);
-            d->fi->vi.fps_denominator = static_cast<unsigned>(fps_d);
+            fi->vi.fps_numerator = static_cast<unsigned>(fps_n);
+            fi->vi.fps_denominator = static_cast<unsigned>(fps_d);
+        }
+
+        if (d->dw)
+        {
+            if (fi->vi.width > INT_MAX / 2)
+                throw std::string{ "resulting clip is too wide" };
+            fi->vi.width <<= 1;
         }
 
         if (d->dh)
-            d->fi->vi.height <<= 1;
+            fi->vi.height <<= 1;
 
         const float remainingWeight{ 1.0f - alpha - beta };
 
@@ -804,45 +776,93 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
         {
             const AVS_VideoInfo* vi1{ avs_get_video_info(d->sclip) };
 
-            if (!avs_is_same_colorspace(&d->fi->vi, vi1))
+            if (!avs_is_same_colorspace(&fi->vi, vi1))
                 throw std::string{ "sclip's format doesn't match" };
-            if (vi1->num_frames != d->fi->vi.num_frames)
+            if (vi1->num_frames != fi->vi.num_frames)
                 throw std::string{ "sclip's number of frames doesn't match" };
-            if ((vi1->width != d->fi->vi.width) || (vi1->height != d->fi->vi.height))
+            if ((vi1->width != fi->vi.width) || (vi1->height != fi->vi.height))
                 throw std::string{ "sclip's dimension doesn't match" };
         }
 
-        const int comp_size{ avs_component_size(&d->fi->vi) };
-        const int iset{ instrset_detect() };
-        if (opt == 1 && iset < 2)
-            throw std::string{ "opt=1 requires SSE2." };
+        const AVS_VideoInfo* child_vi{ avs_get_video_info(clip) };
+        int max_processing_width{ child_vi->width };
+        int max_processing_height{ (d->dh) ? (child_vi->height << 1) : child_vi->height };
 
-        if ((opt == -1 && iset >= 2) || opt == 1)
+        if (d->dw)
         {
+            const int pass2_w{ (d->dh) ? (child_vi->height << 1) : child_vi->height };
+            const int pass2_h{ child_vi->width << 1 };
+            max_processing_width = std::max(max_processing_width, pass2_w);
+            max_processing_height = std::max(max_processing_height, pass2_h);
+        }
+
+        const int dmap_elements{ max_processing_width * max_processing_height };
+        const int comp_size{ avs_component_size(&fi->vi) };
+        int local_work_size{ 64 };
+
+        if (avx512)
+        {
+            d->vectorSize = 16;
+            local_work_size = 4;
+
             switch (comp_size)
             {
-                case 1: d->filter = filterCL_sse2<uint8_t>; break;
-                case 2: d->filter = filterCL_sse2<uint16_t>; break;
-                default: d->filter = filterCL_sse2<float>; break;
+            case 1:
+                d->filter = filterCL_avx512<uint8_t>;
+                break;
+            case 2:
+                d->filter = filterCL_avx512<uint16_t>;
+                break;
+            default:
+                d->filter = filterCL_avx512<float>;
+                break;
             }
+        }
+        else if (avx2)
+        {
+            d->vectorSize = 8;
+            local_work_size = 8;
 
+            switch (comp_size)
+            {
+            case 1:
+                d->filter = filterCL_avx2<uint8_t>;
+                break;
+            case 2:
+                d->filter = filterCL_avx2<uint16_t>;
+                break;
+            default:
+                d->filter = filterCL_avx2<float>;
+                break;
+            }
+        }
+        else if (sse2)
+        {
             d->vectorSize = 4;
+            local_work_size = 16;
+
+            switch (comp_size)
+            {
+            case 1:
+                d->filter = filterCL_sse2<uint8_t>;
+                break;
+            case 2:
+                d->filter = filterCL_sse2<uint16_t>;
+                break;
+            default:
+                d->filter = filterCL_sse2<float>;
+                break;
+            }
         }
         else
         {
-            switch (comp_size)
-            {
-                case 1: d->filter = filterCL_c<uint8_t>; break;
-                case 2: d->filter = filterCL_c<uint16_t>; break;
-                default: d->filter = filterCL_c<float>; break;
-            }
-
             d->vectorSize = 1;
+            d->filter = filterCL_c;
         }
 
         if (comp_size < 4)
         {
-            d->peak = (1 << avs_bits_per_component(&d->fi->vi)) - 1;
+            d->peak = (1 << bit_depth) - 1;
             const float scale{ d->peak / 255.0f };
             beta *= scale;
             d->gamma *= scale;
@@ -851,6 +871,7 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
         }
         else
         {
+            d->peak = 0;
             beta /= 255.0f;
             d->gamma /= 255.0f;
             vthresh0 /= 255.0f;
@@ -873,6 +894,7 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
         }
 
         boost::compute::program program;
+        const std::string final_source_code{ std::string(source) + std::string(interpolation_kernels_source) };
 
         try
         {
@@ -891,9 +913,9 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
             options << " -D VECTOR_SIZE=" << d->vectorSize;
             options << " -D MDIS_VECTOR=" << d->mdisVector;
             options << " -D TPITCH_VECTOR=" << d->tpitchVector;
-            options << " -D LOCAL_WORK_SIZE_X=" << (64 / d->vectorSize);
+            options << " -D LOCAL_WORK_SIZE_X=" << local_work_size;
             options << " -D LOCAL_WORK_SIZE_Y=" << d->vectorSize;
-            program = boost::compute::program::build_with_source(source, context, options.str());
+            program = boost::compute::program::build_with_source(final_source_code, context, options.str());
         }
         catch (const boost::compute::opencl_error& error)
         {
@@ -903,41 +925,49 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
         d->queue = boost::compute::command_queue{ context, device };
 
         if (comp_size < 4)
+        {
             d->calculateConnectionCosts = program.create_kernel("calculateConnectionCosts_uint");
+            d->applyInterpolationKernel = program.create_kernel("applyInterpolation_uint");
+            d->vCheckKernel = program.create_kernel("vCheck_uint");
+        }
         else
+        {
             d->calculateConnectionCosts = program.create_kernel("calculateConnectionCosts_float");
+            d->applyInterpolationKernel = program.create_kernel("applyInterpolation_float");
+            d->vCheckKernel = program.create_kernel("vCheck_float");
+        }
 
-        d->src = boost::compute::image2d{ context, d->fi->vi.width + 24U, d->fi->vi.height + 8U, boost::compute::image_format{d->clImageFormat}, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY };
+        d->transpose_u8_kernel = program.create_kernel("transpose_u8");
+        d->transpose_u16_kernel = program.create_kernel("transpose_u16");
+        d->transpose_f32_kernel = program.create_kernel("transpose_f32");
 
-        d->ccosts = boost::compute::buffer{ context, d->fi->vi.width * d->tpitchVector * sizeof(cl_float), CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR | CL_MEM_HOST_READ_ONLY };
+        d->src = boost::compute::image2d{ context, static_cast<size_t>(max_processing_width) + 24U, static_cast<size_t>(max_processing_height) + 8U, boost::compute::image_format{d->clImageFormat}, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY };
+        d->dst = boost::compute::image2d{ context, static_cast<size_t>(max_processing_width), static_cast<size_t>(max_processing_height), boost::compute::image_format{d->clImageFormat}, CL_MEM_READ_WRITE };
+        d->vcheck_tmp = boost::compute::image2d{ context, static_cast<size_t>(max_processing_width), static_cast<size_t>(max_processing_height), boost::compute::image_format{d->clImageFormat}, CL_MEM_WRITE_ONLY };
 
-        d->pcosts = static_cast<float*>(aligned_malloc(d->fi->vi.width * d->tpitchVector * sizeof(float), 16));
+        const size_t fpath_size{ static_cast<size_t>(max_processing_width) * (max_processing_height >> 1) * sizeof(int) };
+        d->fpath_gpu = boost::compute::buffer{ context, fpath_size, CL_MEM_READ_ONLY | CL_MEM_HOST_WRITE_ONLY };
+
+        const size_t dmap_gpu_size{ static_cast<size_t>(dmap_elements) * sizeof(int) };
+        d->dmap_gpu = boost::compute::buffer{ context, dmap_gpu_size, CL_MEM_READ_WRITE };
+
+        d->ccosts = boost::compute::buffer{ context, static_cast<size_t>(max_processing_width) * d->tpitchVector * sizeof(cl_float), CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR | CL_MEM_HOST_READ_ONLY };
+
+        d->pcosts = static_cast<float*>(aligned_malloc(static_cast<size_t>(max_processing_width) * d->tpitchVector * sizeof(float), 64));
         if (!d->pcosts)
             throw std::string{ "malloc failure (pcosts)" };
 
-        d->pbackt = static_cast<int*>(aligned_malloc(d->fi->vi.width * d->tpitchVector * sizeof(int), 16));
+        d->pbackt = static_cast<int*>(aligned_malloc(static_cast<size_t>(max_processing_width) * d->tpitchVector * sizeof(int), 64));
         if (!d->pbackt)
             throw std::string{ "malloc failure (pbackt)" };
 
-        d->fpath = new (std::nothrow) int[d->fi->vi.width * d->vectorSize];
+        d->fpath = new (std::nothrow) int[static_cast<size_t>(max_processing_width) * d->vectorSize];
         if (!d->fpath)
             throw std::string{ "malloc failure (fpath)" };
 
-        d->dmap = new (std::nothrow) int[d->fi->vi.width * d->fi->vi.height];
+        d->dmap = new (std::nothrow) int[dmap_elements];
         if (!d->dmap)
             throw std::string{ "malloc failure (dmap)" };
-
-        if (d->vcheck)
-        {
-            d->tline = new (std::nothrow) int[d->fi->vi.width];
-            if (!d->tline)
-                throw std::string{ "malloc failure (tline)" };
-        }
-        else
-            d->tline = nullptr;
-
-        memcpy(&d->vi_pad, &d->fi->vi, sizeof(AVS_VideoInfo));
-        d->vi_pad.pixel_type = AVS_CS_GENERIC_Y;
     }
     catch (const std::string& error)
     {
@@ -959,10 +989,10 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
     {
         v = avs_new_value_clip(clip);
 
-        d->fi->user_data = reinterpret_cast<void*>(d);
-        d->fi->get_frame = get_frame_EEDI3CL;
-        d->fi->set_cache_hints = set_cache_hints_EEDI3CL;
-        d->fi->free_filter = free_EEDI3CL;
+        fi->user_data = reinterpret_cast<void*>(d);
+        fi->get_frame = get_frame_EEDI3CL;
+        fi->set_cache_hints = set_cache_hints_EEDI3CL;
+        fi->free_filter = free_EEDI3CL;
     }
 
     avs_release_clip(clip);
@@ -970,8 +1000,8 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* env, AVS_Value ar
     return v;
 }
 
-const char* AVSC_CC avisynth_c_plugin_init(AVS_ScriptEnvironment* env)
+const char* AVSC_CC avisynth_c_plugin_init(AVS_ScriptEnvironment* __restrict env)
 {
-    avs_add_function(env, "EEDI3CL", "c[field]i[dh]b[planes]i*[alpha]f[beta]f[gamma]f[nrad]i[mdis]i[hp]b[ucubic]b[cost3]b[vcheck]i[vthresh0]f[vthresh1]f[vthresh2]f[sclip]c[opt]i[device]i[list_device]b[info]b[luma]b", Create_EEDI3CL, 0);
+    avs_add_function(env, "EEDI3CL", "c[field]i[dh]b[dw]b[planes]i*[alpha]f[beta]f[gamma]f[nrad]i[mdis]i[hp]b[ucubic]b[cost3]b[vcheck]i[vthresh0]f[vthresh1]f[vthresh2]f[sclip]c[opt]i[device]i[list_device]b[info]b[luma]b", Create_EEDI3CL, 0);
     return "EEDI3CL";
 }
