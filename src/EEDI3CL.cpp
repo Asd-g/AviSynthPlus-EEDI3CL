@@ -536,7 +536,8 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* __restrict env, A
         d->dh = avs_defined(avs_array_elt(args, Dh)) ? avs_as_bool(avs_array_elt(args, Dh)) : 0;
         d->dw = avs_defined(avs_array_elt(args, Dw)) ? avs_as_bool(avs_array_elt(args, Dw)) : 0;
 
-        const int num_planes{(avs_defined(avs_array_elt(args, Planes))) ? avs_array_size(avs_array_elt(args, Planes)) : 0};
+        avs_helpers::converted_array<int> num_planes_load{avs_helpers::get_opt_array_as_unique_ptr<int>(args, Planes)};
+        const int num_planes{num_planes_load.size};
         const int onlyY{(avs_defined(avs_array_elt(args, Luma))) ? avs_as_bool(avs_array_elt(args, Luma)) : 0};
 
         if (onlyY)
@@ -554,7 +555,7 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* __restrict env, A
 
         for (int i{0}; i < num_planes; ++i)
         {
-            const int n{avs_as_int(*(avs_as_array(avs_array_elt(args, Planes)) + i))};
+            const int n{num_planes_load.data[i]};
 
             if (n >= g_avs_api->avs_num_components(&fi->vi))
                 throw std::string{"plane index out of range"};
