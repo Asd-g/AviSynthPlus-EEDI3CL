@@ -25,7 +25,7 @@ AVS_FORCEINLINE void* aligned_malloc(size_t size, size_t align)
         else
             return result;
 #endif
-        }();
+    }();
 
     return result;
 }
@@ -103,17 +103,22 @@ struct EEDI3CLData
     std::unique_ptr<int[]> dmap;
     std::string err;
 
-    void (*filter)(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
+    void (*filter)(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh,
+        EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
 };
 
 template<typename T>
 void copyPlane(void* dstp_, const int dstStride, const void* srcp_, const int srcStride, const int width, const int height) noexcept;
 template<typename T>
-void copyPad(const AVS_VideoFrame* src, AVS_VideoFrame* dst, const int plane, const int plane0, const int off, const bool dh, AVS_ScriptEnvironment* __restrict env) noexcept;
+void copyPad(const AVS_VideoFrame* src, AVS_VideoFrame* dst, const int plane, const int plane0, const int off, const bool dh,
+    AVS_ScriptEnvironment* __restrict env) noexcept;
 
 template<typename T>
-void filterCL_sse2(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
+void filterCL_sse2(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh,
+    EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
 template<typename T>
-void filterCL_avx2(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
+void filterCL_avx2(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh,
+    EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
 template<typename T>
-void filterCL_avx512(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
+void filterCL_avx512(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh,
+    EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
