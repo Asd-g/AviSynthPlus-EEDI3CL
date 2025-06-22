@@ -6,7 +6,7 @@ if (NOT CMAKE_GENERATOR MATCHES "Visual Studio")
     endif()
 endif()
 
-project(EEDI3CL VERSION 1.0.2 LANGUAGES CXX)
+project(EEDI3CL VERSION 1.1.0 LANGUAGES CXX)
 
 option(USE_SYSTEM_AVS_HELPER "Use an installed version of avs_c_api_loader" OFF)
 

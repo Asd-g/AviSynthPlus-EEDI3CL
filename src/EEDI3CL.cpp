@@ -416,18 +416,18 @@ static AVS_VideoFrame* AVSC_CC get_frame_EEDI3CL(AVS_FilterInfo* __restrict fi, 
             AVS_VideoInfo vi_inter{fi->vi};
             vi_inter.width = src_vi->width;
             vi_inter.height = (d->dh) ? (src_vi->height << 1) : src_vi->height;
-            avs_helpers::avs_video_frame_ptr inter{g_avs_api->avs_new_video_frame_p(fi->env, &vi_inter, nullptr)};
+            avs_helpers::avs_video_frame_ptr inter{g_avs_api->avs_new_video_frame_a(fi->env, &vi_inter, AVS_FRAME_ALIGN)};
             AVS_VideoFrame* inter_raw{inter.get()};
             d->filter(src_raw, nullptr, inter_raw, field, d->dh, d, fi);
 
             AVS_VideoInfo vi_t_src{vi_inter};
             std::swap(vi_t_src.width, vi_t_src.height);
-            avs_helpers::avs_video_frame_ptr src_t{g_avs_api->avs_new_video_frame_p(fi->env, &vi_t_src, nullptr)};
+            avs_helpers::avs_video_frame_ptr src_t{g_avs_api->avs_new_video_frame_a(fi->env, &vi_t_src, AVS_FRAME_ALIGN)};
             AVS_VideoFrame* src_t_raw{src_t.get()};
 
             AVS_VideoInfo vi_t_dst{vi_t_src};
             vi_t_dst.height <<= 1;
-            avs_helpers::avs_video_frame_ptr dst_t{g_avs_api->avs_new_video_frame_p(fi->env, &vi_t_dst, nullptr)};
+            avs_helpers::avs_video_frame_ptr dst_t{g_avs_api->avs_new_video_frame_a(fi->env, &vi_t_dst, AVS_FRAME_ALIGN)};
             AVS_VideoFrame* dst_t_raw{dst_t.get()};
 
             transpose_video_frame_cl(src_t_raw, inter_raw, d, src_vi);
@@ -495,7 +495,6 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* __restrict env, A
         Clip,
         Field,
         Dh,
-        Dw,
         Planes,
         Alpha,
         Beta,
@@ -514,7 +513,8 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* __restrict env, A
         Device,
         List_device,
         Info,
-        Luma
+        Luma,
+        Dw
     };
 
     std::unique_ptr<EEDI3CLData> d{std::make_unique<EEDI3CLData>()};
@@ -1075,7 +1075,6 @@ const char* AVSC_CC avisynth_c_plugin_init(AVS_ScriptEnvironment* __restrict env
         "c"
         "[field]i"
         "[dh]b"
-        "[dw]b"
         "[planes]i*"
         "[alpha]f"
         "[beta]f"
@@ -1094,7 +1093,8 @@ const char* AVSC_CC avisynth_c_plugin_init(AVS_ScriptEnvironment* __restrict env
         "[device]i"
         "[list_device]b"
         "[info]b"
-        "[luma]b",
+        "[luma]b"
+        "[dw]b",
         Create_EEDI3CL, 0);
     return "EEDI3CL";
 }
