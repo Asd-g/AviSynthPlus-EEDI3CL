@@ -6,14 +6,14 @@ using V_int = std::conditional_t <std::is_same_v<V_float, Vec4f>, Vec4i, std::co
 using V_ibool = std::conditional_t <std::is_same_v<V_float, Vec4f>, Vec4ib, std::conditional_t<std::is_same_v<V_float, Vec8f>, Vec8ib, Vec16ib>>;
 
 template<typename T>
-void filterCL_sse2(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi)
+void filterCL_sse2(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi)
 {
     constexpr int planes_y[4]{ AVS_PLANAR_Y, AVS_PLANAR_U, AVS_PLANAR_V, AVS_PLANAR_A };
     constexpr int planes_r[4]{ AVS_PLANAR_R, AVS_PLANAR_G, AVS_PLANAR_B, AVS_PLANAR_A };
     const bool is_rgb{ !!avs_is_rgb(&fi->vi) };
     const int* planes{ (is_rgb) ? planes_r : planes_y };
 
-    for (int plane{ 0 }; plane < avs_num_components(&fi->vi); ++plane)
+    for (int plane{ 0 }; plane < g_avs_api->avs_num_components(&fi->vi); ++plane)
     {
         if (d->process[plane])
         {
@@ -22,28 +22,29 @@ void filterCL_sse2(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* _
             AVS_VideoInfo vi_pad{};
             memcpy(&vi_pad, &fi->vi, sizeof(AVS_VideoInfo));
             vi_pad.pixel_type = AVS_CS_GENERIC_Y;
-            const int src_h_for_pad{ (use_dh) ? (avs_get_height_p(src, current_plane) << 1) : avs_get_height_p(src, current_plane) };
-            vi_pad.width = avs_get_row_size_p(src, current_plane) + 24 * avs_component_size(&fi->vi);
+            const int src_h_for_pad{ (use_dh) ? (g_avs_api->avs_get_height_p(src, current_plane) << 1) : g_avs_api->avs_get_height_p(src, current_plane) };
+            vi_pad.width = g_avs_api->avs_get_row_size_p(src, current_plane) + 24 * sizeof(T);
             vi_pad.height = src_h_for_pad + 8;
-            AVS_VideoFrame* pad{ avs_new_video_frame(fi->env, &vi_pad) };
+            avs_helpers::avs_video_frame_ptr pad(g_avs_api->avs_new_video_frame_a(fi->env, &vi_pad, AVS_FRAME_ALIGN));
+            AVS_VideoFrame* pad_raw{ pad.get() };
 
             int peak{ d->peak };
 
             if constexpr (std::is_same_v<T, uint8_t>)
-                copyPad<uint8_t>(src, pad, current_plane, AVS_DEFAULT_PLANE, 1 - field_n, use_dh, fi->env);
+                copyPad<uint8_t>(src, pad_raw, current_plane, AVS_DEFAULT_PLANE, 1 - field_n, use_dh, fi->env);
             else if constexpr (std::is_same_v<T, uint16_t>)
-                copyPad<uint16_t>(src, pad, current_plane, AVS_DEFAULT_PLANE, 1 - field_n, use_dh, fi->env);
+                copyPad<uint16_t>(src, pad_raw, current_plane, AVS_DEFAULT_PLANE, 1 - field_n, use_dh, fi->env);
             else
             {
-                copyPad<float>(src, pad, current_plane, AVS_DEFAULT_PLANE, 1 - field_n, use_dh, fi->env);
+                copyPad<float>(src, pad_raw, current_plane, AVS_DEFAULT_PLANE, 1 - field_n, use_dh, fi->env);
                 peak = (plane == 0 || is_rgb) ? 1 : 0;
             }
 
-            const int paddedWidth{ avs_get_row_size_p(pad, AVS_DEFAULT_PLANE) / static_cast<int>(sizeof(T)) };
-            const int dstWidth{ avs_get_row_size_p(dst, current_plane) / static_cast<int>(sizeof(T)) };
-            const int paddedHeight{ avs_get_height_p(pad, AVS_DEFAULT_PLANE) };
-            const int dstHeight{ avs_get_height_p(dst, current_plane) };
-            void* __restrict _dstp{ avs_get_write_ptr_p(dst, current_plane) };
+            const int paddedWidth{ g_avs_api->avs_get_row_size_p(pad_raw, AVS_DEFAULT_PLANE) / static_cast<int>(sizeof(T)) };
+            const int dstWidth{ g_avs_api->avs_get_row_size_p(dst, current_plane) / static_cast<int>(sizeof(T)) };
+            const int paddedHeight{ g_avs_api->avs_get_height_p(pad_raw, AVS_DEFAULT_PLANE) };
+            const int dstHeight{ g_avs_api->avs_get_height_p(dst, current_plane) };
+            void* _dstp{ g_avs_api->avs_get_write_ptr_p(dst, current_plane) };
 
             auto& queue{ d->queue };
             auto& calculateConnectionCosts{ d->calculateConnectionCosts };
@@ -51,17 +52,17 @@ void filterCL_sse2(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* _
             auto& dstImage{ d->dst };
             auto& vcheckTmpImage{ d->vcheck_tmp };
             auto& _ccosts{ d->ccosts };
-            float* pcosts{ d->pcosts + d->mdisVector };
-            int* pbackt{ d->pbackt + d->mdisVector };
-            int* fpath_line{ d->fpath };
-            int* fpath_all_lines{ d->dmap };
+            float* pcosts{ d->pcosts.get() + d->mdisVector};
+            int* pbackt{ d->pbackt.get() + d->mdisVector};
+            int* fpath_line{ d->fpath.get() };
+            int* fpath_all_lines{ d->dmap.get() };
 
             const size_t globalWorkSize[]{ static_cast<size_t>((dstWidth + 15) & -16), static_cast<size_t>(d->vectorSize) };
             constexpr size_t localWorkSize[]{ 16, 4 };
             const int bufferSize{ static_cast<int>(dstWidth * d->tpitchVector * sizeof(cl_float)) };
 
             queue.enqueue_write_image(srcImage, boost::compute::dim(0, 0), boost::compute::dim(paddedWidth, paddedHeight),
-                avs_get_read_ptr_p(pad, AVS_DEFAULT_PLANE), avs_get_pitch_p(pad, AVS_DEFAULT_PLANE));
+                g_avs_api->avs_get_read_ptr_p(pad_raw, AVS_DEFAULT_PLANE), g_avs_api->avs_get_pitch_p(pad_raw, AVS_DEFAULT_PLANE));
 
             for (int y{ 4 + field_n }; y < paddedHeight - 4; y += 2 * d->vectorSize)
             {
@@ -136,9 +137,9 @@ void filterCL_sse2(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* _
                 if (d->sclip)
                 {
                     use_sclip = 1;
-                    const void* scpp{ avs_get_read_ptr_p(scp, current_plane) };
-                    sclip_stride_arg = avs_get_pitch_p(scp, current_plane);
-                    const size_t sclip_size{ static_cast<size_t>(sclip_stride_arg) * avs_get_height_p(scp, current_plane) };
+                    const void* scpp{ g_avs_api->avs_get_read_ptr_p(scp, current_plane) };
+                    sclip_stride_arg = g_avs_api->avs_get_pitch_p(scp, current_plane);
+                    const size_t sclip_size{ static_cast<size_t>(sclip_stride_arg) * g_avs_api->avs_get_height_p(scp, current_plane) };
                     sclip_buffer = boost::compute::buffer(queue.get_context(), sclip_size, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, const_cast<void*>(scpp));
                 }
                 else
@@ -149,15 +150,13 @@ void filterCL_sse2(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* _
                 final_image = &vcheckTmpImage;
             }
 
-            queue.enqueue_read_image(*final_image, boost::compute::dim(0, 0), boost::compute::dim(dstWidth, dstHeight), _dstp, avs_get_pitch_p(dst, current_plane));
-
-            avs_release_video_frame(pad);
+            queue.enqueue_read_image(*final_image, boost::compute::dim(0, 0), boost::compute::dim(dstWidth, dstHeight), _dstp, g_avs_api->avs_get_pitch_p(dst, current_plane));
         }
     }
 
     d->queue.finish();
 }
 
-template void filterCL_sse2<uint8_t>(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
-template void filterCL_sse2<uint16_t>(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
-template void filterCL_sse2<float>(const AVS_VideoFrame* __restrict src, const AVS_VideoFrame* __restrict scp, AVS_VideoFrame* __restrict dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
+template void filterCL_sse2<uint8_t>(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
+template void filterCL_sse2<uint16_t>(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
+template void filterCL_sse2<float>(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh, EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);
