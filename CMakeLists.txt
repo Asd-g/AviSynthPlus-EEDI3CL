@@ -56,8 +56,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
     target_link_libraries(${PROJECT_NAME} PRIVATE "libmmds")
 endif()
 
-set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/EEDI3CL_AVX2.cpp" PROPERTIES COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:MSVC>:/arch:AVX2>$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:mavx2;-mfma>")
-set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/EEDI3CL_AVX512.cpp" PROPERTIES COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:MSVC>:/arch:AVX512>$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:mavx512f;-mavx512bw;-mavx512dq;-mavx512vl;-mavx512cd;-mfma>")
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/EEDI3CL_AVX2.cpp" PROPERTIES COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:MSVC>:/arch:AVX2>$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-mavx2;-mfma>")
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/EEDI3CL_AVX512.cpp" PROPERTIES COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:MSVC>:/arch:AVX512>$<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-mavx512f;-mavx512bw;-mavx512dq;-mavx512vl;-mavx512cd;-mfma>")
 
 if (NOT CMAKE_GENERATOR MATCHES "Visual Studio")
     string(TOLOWER ${CMAKE_BUILD_TYPE} build_type)
