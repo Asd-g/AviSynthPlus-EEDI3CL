@@ -1,6 +1,7 @@
 ##### 1.1.1:
     Fixed the dummy buffer size.
     Fixed potential garbage data.
+    Properly stored messages.
 
 ##### 1.1.0:
     Added `dw` parameter (#2).

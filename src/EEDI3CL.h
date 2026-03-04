@@ -101,7 +101,6 @@ struct EEDI3CLData
     aligned_unique_ptr<int> pbackt;
     std::unique_ptr<int[]> fpath;
     std::unique_ptr<int[]> dmap;
-    std::string err;
 
     void (*filter)(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS_VideoFrame* dst, const int field_n, bool use_dh,
         EEDI3CLData* __restrict d, const AVS_FilterInfo* __restrict fi);

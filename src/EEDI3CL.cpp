@@ -437,8 +437,8 @@ static AVS_VideoFrame* AVSC_CC get_frame_EEDI3CL(AVS_FilterInfo* __restrict fi, 
     }
     catch (const boost::compute::opencl_error& error)
     {
-        d->err = "EEDI3CL: " + error.error_string();
-        fi->error = d->err.c_str();
+        std::string msg{"EEDI3CL: " + error.error_string()};
+        fi->error = g_avs_api->avs_save_string(fi->env, msg.c_str(), static_cast<int>(msg.size()));
 
         return nullptr;
     }
@@ -678,14 +678,15 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* __restrict env, A
         if (avs_defined(avs_array_elt(args, List_device)) ? avs_as_bool(avs_array_elt(args, List_device)) : 0)
         {
             const auto devices{boost::compute::system::devices()};
+            std::string msg;
 
             for (size_t i{0}; i < devices.size(); ++i)
-                d->err += std::to_string(i) + ": " + devices[i].name() + " (" + devices[i].platform().name() + ")" + "\n";
+                msg += std::to_string(i) + ": " + devices[i].name() + " (" + devices[i].platform().name() + ")" + "\n";
 
             AVS_Value cl;
             g_avs_api->avs_set_to_clip(&cl, clip_raw);
             avs_helpers::avs_value_guard cl_guard(cl);
-            AVS_Value args_[2]{cl_guard.get(), avs_new_value_string(d->err.c_str())};
+            AVS_Value args_[2]{cl_guard.get(), avs_new_value_string(g_avs_api->avs_save_string(env, msg.c_str(), msg.size()))};
             v = g_avs_api->avs_invoke(fi->env, "Text", avs_new_value_array(args_, 2), 0);
 
             fi->user_data = d.release();
@@ -703,60 +704,61 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* __restrict env, A
 
         if (avs_defined(avs_array_elt(args, Info)) ? avs_as_bool(avs_array_elt(args, Info)) : 0)
         {
-            d->err = "=== Platform Info ==\n";
+            std::string msg;
+
+            msg = "=== Platform Info ==\n";
             const auto platform{device.platform()};
-            d->err += "Profile: " + platform.get_info<CL_PLATFORM_PROFILE>() + "\n";
-            d->err += "Version: " + platform.get_info<CL_PLATFORM_VERSION>() + "\n";
-            d->err += "Name: " + platform.get_info<CL_PLATFORM_NAME>() + "\n";
-            d->err += "Vendor: " + platform.get_info<CL_PLATFORM_VENDOR>() + "\n";
+            msg += "Profile: " + platform.get_info<CL_PLATFORM_PROFILE>() + "\n";
+            msg += "Version: " + platform.get_info<CL_PLATFORM_VERSION>() + "\n";
+            msg += "Name: " + platform.get_info<CL_PLATFORM_NAME>() + "\n";
+            msg += "Vendor: " + platform.get_info<CL_PLATFORM_VENDOR>() + "\n";
 
-            d->err += "\n";
+            msg += "\n";
 
-            d->err += "=== Device Info ==\n";
-            d->err += "Name: " + device.get_info<CL_DEVICE_NAME>() + "\n";
-            d->err += "Vendor: " + device.get_info<CL_DEVICE_VENDOR>() + "\n";
-            d->err += "Profile: " + device.get_info<CL_DEVICE_PROFILE>() + "\n";
-            d->err += "Version: " + device.get_info<CL_DEVICE_VERSION>() + "\n";
-            d->err += "Max compute units: " + std::to_string(device.get_info<CL_DEVICE_MAX_COMPUTE_UNITS>()) + "\n";
-            d->err += "Max work-group size: " + std::to_string(device.get_info<CL_DEVICE_MAX_WORK_GROUP_SIZE>()) + "\n";
+            msg += "=== Device Info ==\n";
+            msg += "Name: " + device.get_info<CL_DEVICE_NAME>() + "\n";
+            msg += "Vendor: " + device.get_info<CL_DEVICE_VENDOR>() + "\n";
+            msg += "Profile: " + device.get_info<CL_DEVICE_PROFILE>() + "\n";
+            msg += "Version: " + device.get_info<CL_DEVICE_VERSION>() + "\n";
+            msg += "Max compute units: " + std::to_string(device.get_info<CL_DEVICE_MAX_COMPUTE_UNITS>()) + "\n";
+            msg += "Max work-group size: " + std::to_string(device.get_info<CL_DEVICE_MAX_WORK_GROUP_SIZE>()) + "\n";
             const auto max_work_item_sizes{device.get_info<CL_DEVICE_MAX_WORK_ITEM_SIZES>()};
-            d->err += "Max work-item sizes: " + std::to_string(max_work_item_sizes[0]) + ", " + std::to_string(max_work_item_sizes[1]) +
-                      ", " + std::to_string(max_work_item_sizes[2]) + "\n";
-            d->err += "2D image max width: " + std::to_string(device.get_info<CL_DEVICE_IMAGE2D_MAX_WIDTH>()) + "\n";
-            d->err += "2D image max height: " + std::to_string(device.get_info<CL_DEVICE_IMAGE2D_MAX_HEIGHT>()) + "\n";
-            d->err += "Image support: " + std::string{device.get_info<CL_DEVICE_IMAGE_SUPPORT>() ? "CL_TRUE" : "CL_FALSE"} + "\n";
+            msg += "Max work-item sizes: " + std::to_string(max_work_item_sizes[0]) + ", " + std::to_string(max_work_item_sizes[1]) + ", " +
+                   std::to_string(max_work_item_sizes[2]) + "\n";
+            msg += "2D image max width: " + std::to_string(device.get_info<CL_DEVICE_IMAGE2D_MAX_WIDTH>()) + "\n";
+            msg += "2D image max height: " + std::to_string(device.get_info<CL_DEVICE_IMAGE2D_MAX_HEIGHT>()) + "\n";
+            msg += "Image support: " + std::string{device.get_info<CL_DEVICE_IMAGE_SUPPORT>() ? "CL_TRUE" : "CL_FALSE"} + "\n";
             const auto global_mem_cache_type{device.get_info<CL_DEVICE_GLOBAL_MEM_CACHE_TYPE>()};
 
             if (global_mem_cache_type == CL_NONE)
-                d->err += "Global memory cache type: CL_NONE\n";
+                msg += "Global memory cache type: CL_NONE\n";
             else if (global_mem_cache_type == CL_READ_ONLY_CACHE)
-                d->err += "Global memory cache type: CL_READ_ONLY_CACHE\n";
+                msg += "Global memory cache type: CL_READ_ONLY_CACHE\n";
             else if (global_mem_cache_type == CL_READ_WRITE_CACHE)
-                d->err += "Global memory cache type: CL_READ_WRITE_CACHE\n";
+                msg += "Global memory cache type: CL_READ_WRITE_CACHE\n";
 
-            d->err += "Global memory cache size: " + std::to_string(device.get_info<CL_DEVICE_GLOBAL_MEM_CACHE_SIZE>() / 1024) + " KB\n";
-            d->err += "Global memory size: " + std::to_string(device.get_info<CL_DEVICE_GLOBAL_MEM_SIZE>() / (1024 * 1024)) + " MB\n";
-            d->err += "Max constant buffer size: " + std::to_string(device.get_info<CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE>() / 1024) + " KB\n";
-            d->err += "Max constant arguments: " + std::to_string(device.get_info<CL_DEVICE_MAX_CONSTANT_ARGS>()) + "\n";
-            d->err +=
-                "Local memory type: " + std::string{device.get_info<CL_DEVICE_LOCAL_MEM_TYPE>() == CL_LOCAL ? "CL_LOCAL" : "CL_GLOBAL"} +
-                "\n";
-            d->err += "Local memory size: " + std::to_string(device.get_info<CL_DEVICE_LOCAL_MEM_SIZE>() / 1024) + " KB\n";
-            d->err += "Available: " + std::string{device.get_info<CL_DEVICE_AVAILABLE>() ? "CL_TRUE" : "CL_FALSE"} + "\n";
-            d->err += "Compiler available: " + std::string{device.get_info<CL_DEVICE_COMPILER_AVAILABLE>() ? "CL_TRUE" : "CL_FALSE"} + "\n";
-            d->err += "OpenCL C version: " + device.get_info<CL_DEVICE_OPENCL_C_VERSION>() + "\n";
-            d->err += "Linker available: " + std::string{device.get_info<CL_DEVICE_LINKER_AVAILABLE>() ? "CL_TRUE" : "CL_FALSE"} + "\n";
-            d->err +=
+            msg += "Global memory cache size: " + std::to_string(device.get_info<CL_DEVICE_GLOBAL_MEM_CACHE_SIZE>() / 1024) + " KB\n";
+            msg += "Global memory size: " + std::to_string(device.get_info<CL_DEVICE_GLOBAL_MEM_SIZE>() / (1024 * 1024)) + " MB\n";
+            msg += "Max constant buffer size: " + std::to_string(device.get_info<CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE>() / 1024) + " KB\n";
+            msg += "Max constant arguments: " + std::to_string(device.get_info<CL_DEVICE_MAX_CONSTANT_ARGS>()) + "\n";
+            msg += "Local memory type: " + std::string{device.get_info<CL_DEVICE_LOCAL_MEM_TYPE>() == CL_LOCAL ? "CL_LOCAL" : "CL_GLOBAL"} +
+                   "\n";
+            msg += "Local memory size: " + std::to_string(device.get_info<CL_DEVICE_LOCAL_MEM_SIZE>() / 1024) + " KB\n";
+            msg += "Available: " + std::string{device.get_info<CL_DEVICE_AVAILABLE>() ? "CL_TRUE" : "CL_FALSE"} + "\n";
+            msg += "Compiler available: " + std::string{device.get_info<CL_DEVICE_COMPILER_AVAILABLE>() ? "CL_TRUE" : "CL_FALSE"} + "\n";
+            msg += "OpenCL C version: " + device.get_info<CL_DEVICE_OPENCL_C_VERSION>() + "\n";
+            msg += "Linker available: " + std::string{device.get_info<CL_DEVICE_LINKER_AVAILABLE>() ? "CL_TRUE" : "CL_FALSE"} + "\n";
+            msg +=
                 "Image max buffer size: " + std::to_string(device.get_info<size_t>(CL_DEVICE_IMAGE_MAX_BUFFER_SIZE) / 1024) + " KB" + "\n";
-            d->err += "Out of order (on host): " +
-                      std::string{!!(device.get_info<CL_DEVICE_QUEUE_ON_HOST_PROPERTIES>() & 1) ? "CL_TRUE" : "CL_FALSE"} + "\n";
-            d->err += "Out of order (on device): " +
-                      std::string{!!(device.get_info<CL_DEVICE_QUEUE_ON_DEVICE_PROPERTIES>() & 1) ? "CL_TRUE" : "CL_FALSE"};
+            msg += "Out of order (on host): " +
+                   std::string{!!(device.get_info<CL_DEVICE_QUEUE_ON_HOST_PROPERTIES>() & 1) ? "CL_TRUE" : "CL_FALSE"} + "\n";
+            msg += "Out of order (on device): " +
+                   std::string{!!(device.get_info<CL_DEVICE_QUEUE_ON_DEVICE_PROPERTIES>() & 1) ? "CL_TRUE" : "CL_FALSE"};
 
             AVS_Value cl;
             g_avs_api->avs_set_to_clip(&cl, clip_raw);
             avs_helpers::avs_value_guard cl_guard(cl);
-            AVS_Value args_[2]{cl_guard.get(), avs_new_value_string(d->err.c_str())};
+            AVS_Value args_[2]{cl_guard.get(), avs_new_value_string(g_avs_api->avs_save_string(env, msg.c_str(), msg.size()))};
             v = g_avs_api->avs_invoke(fi->env, "Text", avs_new_value_array(args_, 2), 0);
 
             fi->user_data = d.release();
@@ -1006,20 +1008,20 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* __restrict env, A
         if (!d->dmap)
             throw std::string{"malloc failure (dmap)"};
     }
-    catch (const std::string& error)
+    catch (const char* error)
     {
-        d->err = "EEDI3CL: " + error;
-        v = avs_new_value_error(d->err.c_str());
+        std::string msg{std::format("EEDI3CL: {}", error)};
+        v = avs_new_value_error(g_avs_api->avs_save_string(fi->env, msg.c_str(), static_cast<int>(msg.size())));
     }
     catch (const boost::compute::no_device_found& error)
     {
-        d->err = std::string{"EEDI3CL: "} + error.what();
-        v = avs_new_value_error(d->err.c_str());
+        std::string msg{std::format("EEDI3CL: {}", error.what())};
+        v = avs_new_value_error(g_avs_api->avs_save_string(fi->env, msg.c_str(), static_cast<int>(msg.size())));
     }
     catch (const boost::compute::opencl_error& error)
     {
-        d->err = "EEDI3CL: " + error.error_string();
-        v = avs_new_value_error(d->err.c_str());
+        std::string msg{std::format("EEDI3CL: {}", error.error_string())};
+        v = avs_new_value_error(g_avs_api->avs_save_string(fi->env, msg.c_str(), static_cast<int>(msg.size())));
     }
 
     if (!avs_defined(v))
@@ -1039,11 +1041,12 @@ const char* AVSC_CC avisynth_c_plugin_init(AVS_ScriptEnvironment* __restrict env
 {
     static constexpr int REQUIRED_INTERFACE_VERSION{9};
     static constexpr int REQUIRED_BUGFIX_VERSION{2};
-    static constexpr std::initializer_list<std::string_view> required_functions{"avs_pool_free", // avs loader helper functions
-        "avs_release_clip",                                                                      // avs loader helper functions
-        "avs_release_value",                                                                     // avs loader helper functions
-        "avs_release_video_frame",                                                               // avs loader helper functions
-        "avs_take_clip",                                                                         // avs loader helper functions
+    static constexpr std::initializer_list<std::string_view> required_functions{
+        "avs_pool_free",           // avs loader helper functions
+        "avs_release_clip",        // avs loader helper functions
+        "avs_release_value",       // avs loader helper functions
+        "avs_release_video_frame", // avs loader helper functions
+        "avs_take_clip",           // avs loader helper functions
         "avs_add_function",
         "avs_new_c_filter",
         "avs_new_video_frame_p",
@@ -1063,7 +1066,8 @@ const char* AVSC_CC avisynth_c_plugin_init(AVS_ScriptEnvironment* __restrict env
         "avs_prop_get_int",
         "avs_bits_per_component",
         "avs_component_size",
-        "avs_num_components"};
+        "avs_num_components",
+    };
 
     if (!avisynth_c_api_loader::get_api(env, REQUIRED_INTERFACE_VERSION, REQUIRED_BUGFIX_VERSION, required_functions))
     {
