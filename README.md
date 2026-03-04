@@ -159,7 +159,7 @@ EEDI3CL(clip input, int "field", bool "dh", int[] "planes", float "alpha", float
 - **Git**
 - **CMake** >= 3.25
 - A **C++20 capable compiler** (e.g., Visual Studio 2022, GCC 11+, Clang 12+)
-- **Boost** libraries (chrono, filesystem, system). Must be findable by CMake.
+- **Boost** libraries > 1.89 (chrono, filesystem). Must be findable by CMake.
 - An **OpenCL SDK**. Must be findable by CMake.
 
 1.  (Linux) Install prerequisites (example for Debian/Ubuntu):

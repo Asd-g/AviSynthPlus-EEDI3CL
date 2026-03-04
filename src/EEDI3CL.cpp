@@ -233,10 +233,10 @@ static void filterCL_c(const AVS_VideoFrame* src, const AVS_VideoFrame* scp, AVS
                         queue.get_context(), sclip_size, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, const_cast<void*>(scpp));
                 }
                 else
-                    sclip_buffer = boost::compute::buffer(queue.get_context(), 1, CL_MEM_READ_ONLY);
+                    sclip_buffer = boost::compute::buffer(queue.get_context(), 4, CL_MEM_READ_ONLY);
 
                 d->vCheckKernel.set_args(srcImage, dstImage, vcheckTmpImage, d->dmap_gpu, sclip_buffer, use_sclip, dstWidth, dstHeight,
-                    sclip_stride_arg, field_n, d->vcheck, d->vthresh2, d->rcpVthresh0, d->rcpVthresh1, d->rcpVthresh2, peak);
+                    sclip_stride_arg, field_n, d->vcheck, d->vthresh2, d->rcpVthresh0, d->rcpVthresh1, d->rcpVthresh2, peak, comp_size);
                 queue.enqueue_nd_range_kernel(d->vCheckKernel, 2, nullptr, apply_gws, apply_lws);
                 final_image = &vcheckTmpImage;
             }

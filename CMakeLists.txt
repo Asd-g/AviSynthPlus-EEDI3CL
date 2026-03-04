@@ -6,13 +6,13 @@ if (NOT CMAKE_GENERATOR MATCHES "Visual Studio")
     endif()
 endif()
 
-project(EEDI3CL VERSION 1.1.0 LANGUAGES CXX)
+project(EEDI3CL VERSION 1.1.1 LANGUAGES CXX)
 
 option(USE_SYSTEM_AVS_HELPER "Use an installed version of avs_c_api_loader" OFF)
 
 find_package(OpenCL REQUIRED)
 
-find_package(Boost REQUIRED COMPONENTS chrono filesystem system)
+find_package(Boost REQUIRED COMPONENTS chrono filesystem thread)
 
 if(USE_SYSTEM_AVS_HELPER)
     message(STATUS "Using system-provided avs_c_api_loader")
@@ -48,7 +48,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Boost::headers
     Boost::chrono
     Boost::filesystem
-    Boost::system
+    Boost::thread
     OpenCL::OpenCL
 )
 

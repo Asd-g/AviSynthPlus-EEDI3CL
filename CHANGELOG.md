@@ -1,3 +1,7 @@
+##### 1.1.1:
+    Fixed the dummy buffer size.
+    Fixed potential garbage data.
+
 ##### 1.1.0:
     Added `dw` parameter (#2).
     Fixed `luma=true` for bit depth >8.
