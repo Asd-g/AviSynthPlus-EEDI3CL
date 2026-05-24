@@ -1,3 +1,8 @@
+##### 1.1.2:
+    Fixed race condition leading to crash.
+    Fixed memory allocation more than needed.
+    Fixed error messages.
+
 ##### 1.1.1:
     Fixed the dummy buffer size.
     Fixed potential garbage data.

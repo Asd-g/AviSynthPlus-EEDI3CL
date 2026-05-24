@@ -1008,7 +1008,7 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* __restrict env, A
         if (!d->dmap)
             throw std::string{"malloc failure (dmap)"};
     }
-    catch (const char* error)
+    catch (const std::string& error)
     {
         std::string msg{std::format("EEDI3CL: {}", error)};
         v = avs_new_value_error(g_avs_api->avs_save_string(fi->env, msg.c_str(), static_cast<int>(msg.size())));
