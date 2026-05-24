@@ -989,12 +989,12 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* __restrict env, A
         d->ccosts = boost::compute::buffer{context, static_cast<size_t>(max_processing_width) * d->tpitchVector * sizeof(cl_float),
             CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR | CL_MEM_HOST_READ_ONLY};
 
-        d->pcosts = make_unique_aligned_array<float>(static_cast<size_t>(max_processing_width) * d->tpitchVector * sizeof(float), 64);
+        d->pcosts = make_unique_aligned_array<float>(static_cast<size_t>(max_processing_width) * d->tpitchVector, 64);
 
         if (!d->pcosts)
             throw std::string{"malloc failure (pcosts)"};
 
-        d->pbackt = make_unique_aligned_array<int>(static_cast<size_t>(max_processing_width) * d->tpitchVector * sizeof(int), 64);
+        d->pbackt = make_unique_aligned_array<int>(static_cast<size_t>(max_processing_width) * d->tpitchVector, 64);
         if (!d->pbackt)
             throw std::string{"malloc failure (pbackt)"};
 
@@ -1037,7 +1037,7 @@ static AVS_Value AVSC_CC Create_EEDI3CL(AVS_ScriptEnvironment* __restrict env, A
     return v;
 }
 
-const char* AVSC_CC avisynth_c_plugin_init(AVS_ScriptEnvironment* __restrict env)
+static const char* init_plugin(AVS_ScriptEnvironment* __restrict env)
 {
     static constexpr int REQUIRED_INTERFACE_VERSION{9};
     static constexpr int REQUIRED_BUGFIX_VERSION{2};
@@ -1101,4 +1101,14 @@ const char* AVSC_CC avisynth_c_plugin_init(AVS_ScriptEnvironment* __restrict env
         "[dw]b",
         Create_EEDI3CL, 0);
     return "EEDI3CL";
+}
+
+const char* AVSC_CC avisynth_c_plugin_init(AVS_ScriptEnvironment* env)
+{
+    return init_plugin(env);
+}
+
+const char* AVSC_CC avisynth_c_plugin_init2(AVS_ScriptEnvironment* env)
+{
+    return init_plugin(env);
 }
